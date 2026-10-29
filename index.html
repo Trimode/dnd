@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-obsidian">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Bleeding Realms of Aetheria | D&D 5.5e World Compendium</title>
+  <meta name="description" content="Interactive world compendium, atlas, and DM/Player command deck for D&D 5.5e campaigns.">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=Cinzel:wght@500;700;800&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+  <!-- Application Stylesheets -->
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/map.css">
+  <link rel="stylesheet" href="css/combat.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="world-crest">✦</div>
+        <div class="world-branding">
+          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span></h1>
+          <div class="world-subtitle">Where Primal Elements Clash and Bleed into Diverse Lands & Peoples</div>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <!-- Global Search Trigger -->
+        <button class="search-trigger-btn" id="search-trigger-btn" title="Search Lore (Ctrl+K)">
+          <span>Quick Search</span>
+          <span class="kbd-badge">Ctrl K</span>
+        </button>
+
+        <!-- Theme Picker -->
+        <select id="theme-select" class="theme-select" title="Switch Visual Theme">
+          <option value="theme-obsidian">Arcane Obsidian</option>
+          <option value="theme-parchment">Ancient Parchment</option>
+          <option value="theme-frost">Glacial Frost</option>
+          <option value="theme-foregrove">Verdant Foregrove</option>
+        </select>
+
+        <!-- Polyhedral Dice Roller Trigger -->
+        <button class="icon-btn" id="dice-roller-trigger" title="Open 5.5e Polyhedral Dice Roller">
+          Roll
+        </button>
+
+        <!-- Ambient Sound Engine Toggle -->
+        <button class="icon-btn" id="audio-toggle-btn" title="Toggle Generative Ambient Audio">
+          Audio
+        </button>
+
+        <!-- Player Account / Auth Pill -->
+        <div id="player-account-container"></div>
+
+        <!-- DM Mode vs Player Mode Toggle (Password Protected) -->
+        <div class="dm-toggle-container" id="dm-toggle-switch" title="Click to Toggle DM / Player Environment">
+          <div class="dm-indicator"></div>
+          <span class="dm-label" id="dm-toggle-label">Player Environment</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Navigation Bar -->
+    <nav class="main-nav" id="main-nav-tabs">
+      <button class="nav-tab-btn active" data-tab="map">World Map & Bleed Atlas</button>
+      <button class="nav-tab-btn" data-tab="combat">Tactical Combat & Battlemat</button>
+      <button class="nav-tab-btn" data-tab="social">Social Lounge & Roleplay</button>
+      <button class="nav-tab-btn" data-tab="hero">Player View & Journal</button>
+      <button class="nav-tab-btn" data-tab="party">Party Roster & Monitor</button>
+      <button class="nav-tab-btn" data-tab="pantheon">Divine Pantheon & Titans</button>
+      <button class="nav-tab-btn" data-tab="characters">Champions & NPCs</button>
+      <button class="nav-tab-btn" data-tab="factions">Factions & Influence</button>
+      <button class="nav-tab-btn" data-tab="bastions">5.5e Bastion Deck</button>
+      <button class="nav-tab-btn" data-tab="lexicon">Primordial Lexicon</button>
+      <button class="nav-tab-btn" data-tab="masteries">5.5e Weapon Masteries</button>
+      <button class="nav-tab-btn" data-tab="timeline">World Timeline</button>
+      <button class="nav-tab-btn" data-tab="quests">Rumor Mill & Quests</button>
+      <button class="nav-tab-btn" data-tab="editor">Lore Customizer & JSON</button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <section id="view-map" class="view-section active"></section>
+      <section id="view-combat" class="view-section"></section>
+      <section id="view-social" class="view-section"></section>
+      <section id="view-hero" class="view-section"></section>
+      <section id="view-party" class="view-section"></section>
+      <section id="view-pantheon" class="view-section"></section>
+      <section id="view-characters" class="view-section"></section>
+      <section id="view-factions" class="view-section"></section>
+      <section id="view-bastions" class="view-section"></section>
+      <section id="view-lexicon" class="view-section"></section>
+      <section id="view-masteries" class="view-section"></section>
+      <section id="view-timeline" class="view-section"></section>
+      <section id="view-quests" class="view-section"></section>
+      <section id="view-editor" class="view-section"></section>
+    </main>
+
+    <!-- Player Authentication & Account Modal (Login / Register) -->
+    <div class="modal-overlay" id="player-auth-modal">
+      <div class="modal-card" id="player-modal-card" style="max-width: 480px;">
+        <div class="modal-header">
+          <h3 style="color: var(--text-gold); display: flex; align-items: center; gap: 0.5rem;">
+            Player Account Portal
+          </h3>
+          <button class="close-btn" id="close-player-auth-modal">&times;</button>
+        </div>
+        
+        <!-- Auth Tabs: Login vs Register -->
+        <div style="display: flex; border-bottom: 1px solid var(--border-subtle); background: var(--bg-tertiary);">
+          <button class="nav-tab-btn active auth-tab-toggle" id="tab-login-btn" style="flex: 1; border-radius: 0; padding: 0.6rem;">
+            Sign In
+          </button>
+          <button class="nav-tab-btn auth-tab-toggle" id="tab-register-btn" style="flex: 1; border-radius: 0; padding: 0.6rem;">
+            Create Account
+          </button>
+        </div>
+
+        <div class="modal-body" style="padding: 1.25rem;">
+          <!-- Error / Success Alert Box -->
+          <div id="auth-alert-box" style="display: none; padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); margin-bottom: 0.75rem; font-size: 0.85rem; font-weight: bold;"></div>
+
+          <!-- SIGN IN FORM -->
+          <form id="player-login-form" style="display: flex; flex-direction: column; gap: 0.85rem;">
+            <div class="editor-form-group">
+              <label class="editor-label">Username</label>
+              <input type="text" id="login-username" class="editor-input" required placeholder="e.g. alex, sam, jordan">
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-label">Password</label>
+              <input type="password" id="login-password" class="editor-input" required placeholder="Your password">
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">
+              <em>Registered Campaign Accounts: 'alex', 'sam', 'jordan', 'morgan'</em>
+            </div>
+            <div class="modal-footer" style="padding: 0; margin-top: 0.5rem;">
+              <button type="button" class="btn" id="cancel-login-modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Sign In & Select Hero</button>
+            </div>
+          </form>
+
+          <!-- REGISTER FORM -->
+          <form id="player-register-form" style="display: none; flex-direction: column; gap: 0.85rem;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <div class="editor-form-group">
+                <label class="editor-label">Username *</label>
+                <input type="text" id="reg-username" class="editor-input" required placeholder="e.g. elena">
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-label">Display Name *</label>
+                <input type="text" id="reg-displayname" class="editor-input" required placeholder="e.g. Elena">
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 100px; gap: 0.75rem;">
+              <div class="editor-form-group">
+                <label class="editor-label">Password *</label>
+                <input type="password" id="reg-password" class="editor-input" required placeholder="Create a password">
+              </div>
+              <div class="editor-form-group">
+                <label class="editor-label">Avatar Initials</label>
+                <input type="text" id="reg-avatar" class="editor-input" value="PC" style="text-align: center;">
+              </div>
+            </div>
+            <div class="editor-form-group">
+              <label class="editor-label">Claim Character from Roster (Optional)</label>
+              <select id="reg-claim-char" class="editor-input">
+                <option value="">-- Create or select hero later --</option>
+              </select>
+            </div>
+            <div class="modal-footer" style="padding: 0; margin-top: 0.5rem;">
+              <button type="button" class="btn" id="cancel-register-modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Create Account & Join Campaign</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- DM Authentication Password Modal (Hidden Credentials) -->
+    <div class="modal-overlay" id="dm-auth-modal">
+      <div class="modal-card" id="dm-modal-card" style="max-width: 460px;">
+        <div class="modal-header" style="background: rgba(244, 67, 54, 0.15); border-bottom-color: rgba(244, 67, 54, 0.3);">
+          <h3 style="color: #ff7961 !important; display: flex; align-items: center; gap: 0.5rem;">
+            Dungeon Master Portal
+          </h3>
+          <button class="close-btn" id="close-dm-auth-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 0.95rem; margin-bottom: 1.25rem; color: var(--text-secondary);">
+            Enter the master cipher to unlock confidential campaign lore, hidden faction agendas, and DM notes.
+          </p>
+          
+          <div class="editor-form-group">
+            <label class="editor-label">Dungeon Master Passphrase</label>
+            <input type="password" id="dm-password-input" class="editor-input" placeholder="Enter DM Passphrase" style="font-size: 1.05rem;" autofocus autocomplete="off">
+            <div id="dm-auth-error" style="display: none; color: #ff5252; font-family: var(--font-sans); font-size: 0.85rem; margin-top: 0.5rem; font-weight: bold;">
+              Incorrect cipher. Access denied.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="cancel-dm-auth-btn">Cancel</button>
+          <button class="btn btn-primary" id="submit-dm-auth-btn" style="background: linear-gradient(135deg, #c62828, #f44336); color: #fff;">
+            Unlock DM Environment
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Search Palette Modal -->
+    <div class="modal-overlay" id="search-modal">
+      <div class="modal-card search-palette">
+        <div class="search-input-wrapper">
+          <input type="text" id="global-search-input" class="search-input" placeholder="Search champions, bastions, regions, runes, factions..." autocomplete="off">
+        </div>
+        <ul class="search-results-list" id="global-search-results"></ul>
+        <div class="modal-footer" style="padding: 0.5rem 1.5rem;">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">Press <kbd class="kbd-badge">ESC</kbd> to close</span>
+          <button class="btn btn-sm" id="close-search-modal">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5.5e Polyhedral Dice Roller Modal -->
+    <div class="modal-overlay" id="dice-modal">
+      <div class="modal-card dice-roller-modal">
+        <div class="modal-header">
+          <h3 style="font-size: 1.25rem; color: var(--text-gold);">5.5e Polyhedral Dice Roller</h3>
+          <button class="close-btn" id="close-dice-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="roll-display-box">
+            <div class="roll-number-large" id="roll-number-display">--</div>
+            <div class="roll-breakdown" id="roll-breakdown-display">Choose a die to roll</div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; justify-content: center; margin-bottom: 1rem;">
+            <button class="filter-chip adv-mode-btn active" data-adv="normal">Normal</button>
+            <button class="filter-chip adv-mode-btn" data-adv="adv">Advantage</button>
+            <button class="filter-chip adv-mode-btn" data-adv="dis">Disadvantage</button>
+          </div>
+
+          <div class="dice-selector-grid">
+            <button class="dice-btn" data-sides="4"><span>▲</span><span>d4</span></button>
+            <button class="dice-btn" data-sides="6"><span>⚅</span><span>d6</span></button>
+            <button class="dice-btn" data-sides="8"><span>◆</span><span>d8</span></button>
+            <button class="dice-btn" data-sides="10"><span>⬖</span><span>d10</span></button>
+            <button class="dice-btn" data-sides="12"><span>⬢</span><span>d12</span></button>
+            <button class="dice-btn" data-sides="20" style="color: #ffb74d;"><span>✦</span><span>d20</span></button>
+            <button class="dice-btn" data-sides="100"><span>%</span><span>d100</span></button>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+              <span>Count:</span>
+              <input type="number" id="dice-count-input" value="1" min="1" max="20" style="width: 45px; padding: 2px 4px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px;">
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+              <span>Die:</span>
+              <select id="dice-sides-select" class="theme-select" style="padding: 2px 6px;">
+                <option value="4">d4</option>
+                <option value="6">d6</option>
+                <option value="8">d8</option>
+                <option value="10">d10</option>
+                <option value="12">d12</option>
+                <option value="20" selected>d20</option>
+                <option value="100">d100</option>
+              </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+              <span>Mod:</span>
+              <input type="number" id="dice-mod-input" value="0" style="width: 50px; padding: 2px 4px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px;">
+            </div>
+            <button class="btn btn-sm btn-primary" id="custom-roll-btn">Roll</button>
+          </div>
+
+          <div>
+            <div style="font-family: var(--font-sans); font-size: 0.75rem; font-weight: bold; color: var(--text-gold); margin-bottom: 0.35rem;">
+              ROLL HISTORY
+            </div>
+            <div class="roll-history-list" id="roll-history-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Application Script -->
+  <script src="js/bundle.js"></script>
+</body>
+</html>

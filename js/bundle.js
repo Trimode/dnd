@@ -6107,13 +6107,13 @@ function initCombatEngine(container) {
 
   // 5.5e Bestiary templates for spawned monsters
   const BESTIARY = {
-    'Goblin':              { ac: 15, hp: 7,  speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow'], spellDC: 11 },
-    'Goblin Alpha':        { ac: 16, hp: 21, speed: 6, init: 2, attackMod: 5, dmgFormula: '1d8+3',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow'], spellDC: 12 },
-    'Orc':                 { ac: 13, hp: 15, speed: 6, init: 1, attackMod: 5, dmgFormula: '1d12+3', dmgType: 'slashing',    weaponName: 'Greataxe',   abilities: ['javelin'], spellDC: 12 },
-    'Skeleton':            { ac: 13, hp: 13, speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'piercing',    weaponName: 'Shortsword', abilities: ['shortbow'], spellDC: 11 },
-    'Owlbear':             { ac: 13, hp: 59, speed: 8, init: 1, attackMod: 7, dmgFormula: '2d8+5',  dmgType: 'slashing',    weaponName: 'Rend',       abilities: ['terrify_roar'], spellDC: 13 },
-    'Troll':               { ac: 15, hp: 84, speed: 6, init: 1, attackMod: 7, dmgFormula: '2d6+4',  dmgType: 'slashing',    weaponName: 'Claw',       abilities: [], spellDC: 14 },
-    'Red Dragon Wyrmling': { ac: 17, hp: 75, speed: 6, init: 0, attackMod: 6, dmgFormula: '1d10+4', dmgType: 'piercing',    weaponName: 'Bite',       abilities: ['fire_breath'], spellDC: 13 }
+    'Goblin':              { ac: 15, hp: 7,  speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow', 'ember_hex'], spellDC: 12 },
+    'Goblin Alpha':        { ac: 16, hp: 21, speed: 6, init: 2, attackMod: 5, dmgFormula: '1d8+3',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow', 'ember_hex', 'scorching_ray'], spellDC: 13 },
+    'Orc':                 { ac: 13, hp: 15, speed: 6, init: 1, attackMod: 5, dmgFormula: '1d12+3', dmgType: 'slashing',    weaponName: 'Greataxe',   abilities: ['javelin', 'terrify_roar'], spellDC: 12 },
+    'Skeleton':            { ac: 13, hp: 13, speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'piercing',    weaponName: 'Shortsword', abilities: ['shortbow', 'ember_hex'], spellDC: 12 },
+    'Owlbear':             { ac: 13, hp: 59, speed: 8, init: 1, attackMod: 7, dmgFormula: '2d8+5',  dmgType: 'slashing',    weaponName: 'Rend',       abilities: ['terrify_roar'], spellDC: 14 },
+    'Troll':               { ac: 15, hp: 84, speed: 6, init: 1, attackMod: 7, dmgFormula: '2d6+4',  dmgType: 'slashing',    weaponName: 'Claw',       abilities: ['frost_breath'], spellDC: 14 },
+    'Red Dragon Wyrmling': { ac: 17, hp: 75, speed: 6, init: 0, attackMod: 6, dmgFormula: '1d10+4', dmgType: 'piercing',    weaponName: 'Bite',       abilities: ['fire_breath', 'fireball'], spellDC: 14 }
   };
 
   const rollD20 = () => Math.floor(Math.random() * 20) + 1;
@@ -7331,7 +7331,7 @@ function initCombatEngine(container) {
       // 1. Check if NPC has an available AoE ability that catches multiple targets
       const usable = usableAbilities(npc);
       const aoeId = usable.find(id => ABILITIES[id]?.kind === 'aoe');
-      if (aoeId) {
+      if (aoeId && !npc.actionUsed) {
         const ab = ABILITIES[aoeId];
         const center = ab.centerSelf ? { x: npc.x, y: npc.y } : { x: primaryTarget.x, y: primaryTarget.y };
         if (dist(npc, center) <= (ab.range || 30)) {
@@ -7343,7 +7343,7 @@ function initCombatEngine(container) {
 
       // 2. Movement Step: Step closer toward target if not in reach
       if (!npc.actionUsed) {
-        const preferredReach = usable.some(id => ABILITIES[id]?.kind === 'attack' && ABILITIES[id].range > 2) ? 4 : 1;
+        const preferredReach = usable.some(id => (ABILITIES[id]?.kind === 'attack' || ABILITIES[id]?.kind === 'save' || ABILITIES[id]?.kind === 'auto') && ABILITIES[id].range > 2) ? 4 : 1;
         while (dist(npc, primaryTarget) > preferredReach && npc.movementLeft > 0) {
           const stepX = Math.sign(primaryTarget.x - npc.x);
           const stepY = Math.sign(primaryTarget.y - npc.y);
@@ -7360,7 +7360,7 @@ function initCombatEngine(container) {
       // 3. Action Step: Spell, ranged ability, or weapon melee
       if (!npc.actionUsed) {
         const targetDist = dist(npc, primaryTarget);
-        // Look for targeted attack or save ability
+        // Look for targeted spell / ability first (save, spell attack, auto-hit)
         const attackAbilityId = usable.find(id => {
           const ab = ABILITIES[id];
           return (ab?.kind === 'attack' || ab?.kind === 'save' || ab?.kind === 'auto') && targetDist <= (ab.range || 20);
@@ -7374,7 +7374,18 @@ function initCombatEngine(container) {
           performWeaponAttack(npc, primaryTarget, 'NORMAL');
           npc.actionUsed = true;
         } else {
-          logMsg(`${npc.name} dashes forward, taking no further action.`, 'var(--text-muted)');
+          // If still out of reach, dash closer with remaining movement
+          while (targetDist > 1 && npc.movementLeft > 0) {
+            const stepX = Math.sign(primaryTarget.x - npc.x);
+            const stepY = Math.sign(primaryTarget.y - npc.y);
+            const nextX = npc.x + stepX;
+            const nextY = npc.y + stepY;
+            if (cState.entities.find(e => e.x === nextX && e.y === nextY && e.hp > 0)) break;
+            npc.x = nextX;
+            npc.y = nextY;
+            npc.movementLeft--;
+          }
+          logMsg(`${npc.name} closes distance toward ${primaryTarget.name}.`, 'var(--text-muted)');
           npc.actionUsed = true;
         }
         await new Promise(r => setTimeout(r, 800));

@@ -634,6 +634,10 @@ function initCombatEngine(container) {
     }
   });
 
+  canvas.addEventListener('mouseleave', () => {
+    cState.hoveredTile = null;
+  });
+
   // Right-Click Context Menu -> Instant Ping
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -996,7 +1000,10 @@ function initCombatEngine(container) {
         if (dist(actor, clickedEntity) > ab.range) return notifyToast(`Out of range (${ab.range <= 1 ? 'touch' : ab.range * 5 + 'ft'}).`);
         executeAbility(actor, id, clickedEntity, tile);
       } else if (ab.kind === 'aoe') {
-        if (!ab.centerSelf && dist(actor, tile) > ab.range) return notifyToast(`Out of range (${ab.range * 5}ft).`);
+        // AoE spells target any square on the map within range (e.g. Fireball)
+        if (!ab.centerSelf && dist(actor, tile) > ab.range) {
+          return notifyToast(`Target square is out of range (${ab.range * 5}ft max).`);
+        }
         executeAbility(actor, id, null, tile);
       } else if (ab.kind === 'teleport') {
         if (clickedEntity) return notifyToast('Tile occupied!');
@@ -1786,11 +1793,24 @@ function initCombatEngine(container) {
       e.currentTarget.classList.add('active');
 
       const spSelect = container.querySelector('#combat-spell-select');
-      if (act === 'CAST') spSelect.style.display = 'block';
-      else spSelect.style.display = 'none';
-
-      if (act === 'PING') notifyToast('Click any square on the map to ping!');
-      else notifyToast(`Select target for ${act.toLowerCase()}...`);
+      if (act === 'CAST') {
+        spSelect.style.display = 'block';
+        if (cState.selectedEntity) {
+          populateAbilitySelect(cState.selectedEntity);
+        }
+        const selAb = ABILITIES[cState.selectedSpellId];
+        if (selAb?.kind === 'aoe') {
+          notifyToast(`Target square for ${selAb.name} (${selAb.radius * 5}ft radius, ${selAb.range * 5}ft range)`);
+        } else if (selAb?.kind === 'teleport') {
+          notifyToast(`Select square to teleport (${selAb.range * 5}ft range)`);
+        } else {
+          notifyToast(`Select target for ${selAb ? selAb.name : 'spell'}...`);
+        }
+      } else {
+        spSelect.style.display = 'none';
+        if (act === 'PING') notifyToast('Click any square on the map to ping!');
+        else notifyToast(`Select target for ${act.toLowerCase()}...`);
+      }
     });
   });
 
@@ -1990,10 +2010,97 @@ function initCombatEngine(container) {
       ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
       for (let x = 0; x < cState.gridSize; x++) {
         for (let y = 0; y < cState.gridSize; y++) {
-          const dist = Math.max(Math.abs(cState.selectedEntity.x - x), Math.abs(cState.selectedEntity.y - y));
-          if (dist <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
+          const d = Math.max(Math.abs(cState.selectedEntity.x - x), Math.abs(cState.selectedEntity.y - y));
+          if (d <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
             ctx.fillRect(x * ts, y * ts, ts, ts);
           }
+        }
+      }
+    }
+
+    // Spell / Ability Targeting & AoE Radius Preview
+    if (cState.selectedEntity && cState.selectedAction === 'CAST' && cState.selectedSpellId) {
+      const actor = cState.selectedEntity;
+      const ab = ABILITIES[cState.selectedSpellId];
+      if (ab) {
+        // 1. Highlight casting range on the grid
+        if (ab.range && !ab.centerSelf) {
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
+          for (let x = 0; x < cState.gridSize; x++) {
+            for (let y = 0; y < cState.gridSize; y++) {
+              const d = Math.max(Math.abs(actor.x - x), Math.abs(actor.y - y));
+              if (d <= ab.range) {
+                ctx.fillRect(x * ts, y * ts, ts, ts);
+              }
+            }
+          }
+        }
+
+        // 2. AoE Radius Preview (follows hovered tile, or centers around actor if self-centered)
+        if (ab.kind === 'aoe') {
+          const center = ab.centerSelf
+            ? { x: actor.x, y: actor.y }
+            : (cState.hoveredTile || null);
+
+          if (center) {
+            const inRange = ab.centerSelf || Math.max(Math.abs(actor.x - center.x), Math.abs(actor.y - center.y)) <= (ab.range || 30);
+            const fillCol = inRange
+              ? (ab.type === 'cold' ? 'rgba(56, 189, 248, 0.28)' : (ab.type === 'thunder' ? 'rgba(167, 139, 250, 0.28)' : 'rgba(249, 115, 22, 0.28)'))
+              : 'rgba(239, 68, 68, 0.22)';
+            const strokeCol = inRange
+              ? (ab.type === 'cold' ? '#38bdf8' : (ab.type === 'thunder' ? '#a78bfa' : '#f97316'))
+              : '#ef4444';
+
+            // Highlight affected grid tiles
+            ctx.fillStyle = fillCol;
+            for (let x = 0; x < cState.gridSize; x++) {
+              for (let y = 0; y < cState.gridSize; y++) {
+                if (Math.max(Math.abs(center.x - x), Math.abs(center.y - y)) <= ab.radius) {
+                  if (!(ab.centerSelf && x === actor.x && y === actor.y)) {
+                    ctx.fillRect(x * ts, y * ts, ts, ts);
+                  }
+                }
+              }
+            }
+
+            // Outline perimeter of AoE
+            const minX = Math.max(0, center.x - ab.radius);
+            const maxX = Math.min(cState.gridSize - 1, center.x + ab.radius);
+            const minY = Math.max(0, center.y - ab.radius);
+            const maxY = Math.min(cState.gridSize - 1, center.y + ab.radius);
+            ctx.strokeStyle = strokeCol;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(minX * ts, minY * ts, (maxX - minX + 1) * ts, (maxY - minY + 1) * ts);
+            ctx.setLineDash([]);
+
+            // Reticle marker at center tile
+            ctx.strokeStyle = strokeCol;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(center.x * ts + 2, center.y * ts + 2, ts - 4, ts - 4);
+
+            // Radius text indicator
+            ctx.fillStyle = strokeCol;
+            ctx.font = 'bold 11px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const radiusFt = ab.radius * 5;
+            ctx.fillText(`${ab.name} (${radiusFt}ft AoE${inRange ? '' : ' - OUT OF RANGE'})`, center.x * ts + ts / 2, minY * ts - 4);
+          }
+        } else if (ab.kind === 'teleport' && cState.hoveredTile) {
+          // Teleport destination tile preview
+          const inRange = Math.max(Math.abs(actor.x - cState.hoveredTile.x), Math.abs(actor.y - cState.hoveredTile.y)) <= ab.range;
+          ctx.fillStyle = inRange ? 'rgba(192, 132, 252, 0.35)' : 'rgba(239, 68, 68, 0.25)';
+          ctx.fillRect(cState.hoveredTile.x * ts, cState.hoveredTile.y * ts, ts, ts);
+          ctx.strokeStyle = inRange ? '#c084fc' : '#ef4444';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(cState.hoveredTile.x * ts + 1, cState.hoveredTile.y * ts + 1, ts - 2, ts - 2);
+        } else if (cState.hoveredTile) {
+          // Single target reticle
+          const inRange = Math.max(Math.abs(actor.x - cState.hoveredTile.x), Math.abs(actor.y - cState.hoveredTile.y)) <= ab.range;
+          ctx.strokeStyle = inRange ? '#fbbf24' : '#ef4444';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(cState.hoveredTile.x * ts + 2, cState.hoveredTile.y * ts + 2, ts - 4, ts - 4);
         }
       }
     }

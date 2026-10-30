@@ -35,18 +35,21 @@ export function renderCombatView(container) {
           </div>
 
           <!-- Phase Indicator -->
-          <div id="combat-phase-indicator" class="filter-chip active" style="font-weight: bold; background: #1e3a8a; color: #93c5fd; border-color: #3b82f6;">
-            PLANNING
+          <div id="combat-phase-indicator" class="filter-chip active" style="font-weight: bold; background: #1e293b; color: #94a3b8; border-color: #475569;">
+            OUT OF COMBAT
           </div>
 
-          <!-- Ready Tracker -->
+          <!-- Round Tracker -->
           <div style="font-size: 0.8rem; font-weight: bold; color: var(--text-gold); background: var(--bg-tertiary); padding: 0.35rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            Ready: <span id="combat-ready-counter" style="color: #4ade80;">0/${party.length}</span>
+            Round: <span id="combat-round-counter" style="color: #4ade80;">—</span>
           </div>
 
-          <!-- Force Resolve Button -->
-          <button id="combat-resolve-btn" class="btn btn-sm btn-primary" style="font-weight: bold; padding: 0.4rem 0.9rem;">
-            Force Resolve (DM)
+          <!-- Start / End Combat (DM) -->
+          <button id="combat-start-btn" class="btn btn-sm btn-primary" style="font-weight: bold; padding: 0.4rem 0.9rem;">
+            Roll Initiative (DM)
+          </button>
+          <button id="combat-end-btn" class="btn btn-sm" style="font-weight: bold; padding: 0.4rem 0.9rem; display: none; color: #fca5a5; border-color: rgba(239, 68, 68, 0.5);">
+            End Combat
           </button>
         </div>
       </div>
@@ -80,20 +83,12 @@ export function renderCombatView(container) {
             <div class="combat-action-grid">
               <button class="combat-act-btn" data-action="MOVE">Move</button>
               <button class="combat-act-btn" data-action="ATTACK">Attack</button>
-              <button class="combat-act-btn" data-action="CAST">Cast</button>
+              <button class="combat-act-btn" data-action="CAST">Spell / Ability</button>
               <button class="combat-act-btn" data-action="PING">Ping</button>
             </div>
 
-            <!-- Spell Selector -->
-            <select id="combat-spell-select" class="theme-select" style="display: none; width: 100%; font-size: 0.75rem;">
-              <option value="firebolt">Firebolt [Cantrip] (1d10 fire)</option>
-              <option value="magic_missile">Magic Missile [Lvl 1] (3d4+3 force, auto-hit)</option>
-              <option value="cure_wounds">Cure Wounds [Lvl 1] (1d8+3 heal, touch)</option>
-              <option value="thunderwave">Thunderwave [Lvl 1] (2d8 thunder, Con save DC 14)</option>
-              <option value="misty_step">Misty Step [Lvl 2] (30ft teleport, bonus)</option>
-              <option value="scorching_ray">Scorching Ray [Lvl 2] (4d6 fire burst)</option>
-              <option value="fireball">Fireball [Lvl 3] (8d6 fire, 20ft AoE, Dex save DC 15)</option>
-            </select>
+            <!-- Spell / Ability Selector (populated per unit) -->
+            <select id="combat-spell-select" class="theme-select" style="display: none; width: 100%; font-size: 0.75rem;"></select>
 
             <!-- DM Unit Saving Throws Panel -->
             <div id="combat-unit-save-panel" style="display: none; margin-top: 0.5rem; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-sm); padding: 0.4rem;">
@@ -142,21 +137,18 @@ export function renderCombatView(container) {
             </div>
           </div>
 
-          <!-- Action Queue -->
-          <div style="flex: 1; display: flex; flex-direction: column; min-height: 120px; border-top: 1px solid var(--border-subtle); padding-top: 0.5rem; margin-top: 0.25rem;">
-            <div class="combat-panel-title" style="border: none; padding-bottom: 0.25rem;">
-              <span>Action Queue</span>
-              <button id="combat-clear-queue-btn" style="background: none; border: none; color: #ff5252; font-size: 0.7rem; font-weight: bold; cursor: pointer;">Clear</button>
-            </div>
-            <div id="combat-queue-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.35rem; max-height: 140px;">
-              <div style="font-size: 0.75rem; font-style: italic; color: var(--text-muted); text-align: center; margin-top: 0.75rem;">Queue is empty.</div>
-            </div>
-          </div>
+          <!-- Current Turn & Action Economy -->
+          <div id="combat-turn-box" style="border-top: 1px solid var(--border-subtle); padding-top: 0.5rem; margin-top: 0.25rem;"></div>
 
-          <!-- Party Ready Check -->
-          <div style="border-top: 1px solid var(--border-subtle); padding-top: 0.5rem;">
-            <div style="font-size: 0.75rem; font-weight: bold; color: var(--text-gold); text-transform: uppercase; margin-bottom: 0.35rem;">Party Ready Check</div>
-            <div id="combat-party-ready-list" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+          <!-- Initiative Order -->
+          <div style="flex: 1; display: flex; flex-direction: column; min-height: 120px; border-top: 1px solid var(--border-subtle); padding-top: 0.5rem;">
+            <div class="combat-panel-title" style="border: none; padding-bottom: 0.25rem;">
+              <span>Initiative Order</span>
+              <label id="combat-auto-npc-label" style="display: none; align-items: center; gap: 0.25rem; font-size: 0.65rem; color: var(--text-muted); cursor: pointer;" title="Automatically run enemy and allied NPC turns">
+                <input type="checkbox" id="combat-auto-npc-chk" checked> Auto NPC turns
+              </label>
+            </div>
+            <div id="combat-initiative-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; max-height: 220px;"></div>
           </div>
         </aside>
 
@@ -259,6 +251,11 @@ export function renderCombatView(container) {
                 </optgroup>
               </select>
 
+              <select id="combat-spawn-team" class="theme-select" style="width: 100%; font-size: 0.75rem; margin-bottom: 0.4rem;" title="Side for spawned NPCs and monsters (party members always join the party)">
+                <option value="enemy" selected>Spawn as: Hostile Enemy</option>
+                <option value="ally">Spawn as: Allied NPC</option>
+              </select>
+
               <div style="display: flex; gap: 0.35rem; margin-bottom: 0.4rem;">
                 <button id="combat-drop-unit-btn" class="btn btn-sm btn-primary" style="flex: 1; font-size: 0.75rem;">Drop on Map</button>
                 <button id="combat-paint-btn" class="btn btn-sm" style="flex: 1; font-size: 0.75rem;">Paint: OFF</button>
@@ -306,100 +303,182 @@ function initCombatEngine(container) {
     gridSize: 11,
     minTileSize: 50,
     tileSize: 50,
-    phase: 'PLANNING',
     currentPerspective: 'DM',
     selectedEntity: null,
     selectedAction: null,
     advantageMode: 'NORMAL',
-    selectedSpellId: 'firebolt',
+    selectedSpellId: null,
     isPaintActive: false,
     hoveredTile: null,
     dmPingVis: 'ALL',
     dmPingRecipients: [],
     dmPingColor: '#38bdf8',
     activePings: [],
-    actionQueue: [],
     entities: [],
-    effects: []
+    effects: [],
+    // Initiative / turn engine
+    combat: { active: false, round: 0, order: [], turnIndex: 0, aiRunning: false },
+    autoNpc: true
   };
+
+  // ==========================================
+  // SPELL & ABILITY LIBRARY (shared by players, NPCs and monsters)
+  // kind: attack (attack roll) | auto (auto-hit) | save (single-target save)
+  //       aoe (area save) | heal | teleport
+  // range / radius are in tiles (1 tile = 5 ft)
+  // ==========================================
+  const ABILITIES = {
+    firebolt:      { name: 'Fire Bolt', kind: 'attack', range: 24, dmg: '1d10', type: 'fire', level: 0 },
+    sacred_flame:  { name: 'Sacred Flame', kind: 'save', save: 'DEX', range: 12, dmg: '2d8', type: 'radiant', half: false, level: 0 },
+    magic_missile: { name: 'Magic Missile', kind: 'auto', range: 24, dmg: '3d4+3', type: 'force', level: 1 },
+    guiding_bolt:  { name: 'Guiding Bolt', kind: 'attack', range: 24, dmg: '4d6', type: 'radiant', level: 1 },
+    cure_wounds:   { name: 'Cure Wounds', kind: 'heal', range: 1, heal: '2d8+4', level: 1 },
+    healing_word:  { name: 'Healing Word', kind: 'heal', range: 12, heal: '2d4+4', level: 1, bonus: true },
+    thunderwave:   { name: 'Thunderwave', kind: 'aoe', save: 'CON', centerSelf: true, radius: 1, dmg: '2d8', type: 'thunder', half: true, level: 1 },
+    misty_step:    { name: 'Misty Step', kind: 'teleport', range: 6, level: 2, bonus: true },
+    scorching_ray: { name: 'Scorching Ray', kind: 'attack', range: 24, dmg: '6d6', type: 'fire', level: 2 },
+    fireball:      { name: 'Fireball', kind: 'aoe', save: 'DEX', range: 30, radius: 4, dmg: '8d6', type: 'fire', half: true, level: 3 },
+    // Weapons & monster abilities
+    shortbow:      { name: 'Shortbow', kind: 'attack', range: 16, dmg: '1d6+2', type: 'piercing', weapon: true },
+    longbow:       { name: 'Longbow', kind: 'attack', range: 30, dmg: '1d8+3', type: 'piercing', weapon: true },
+    javelin:       { name: 'Javelin', kind: 'attack', range: 6, dmg: '1d6+3', type: 'piercing', weapon: true },
+    psychic_blade: { name: 'Psychic Blade (thrown)', kind: 'attack', range: 12, dmg: '1d6+4', type: 'psychic', weapon: true },
+    ember_hex:     { name: 'Ember Hex', kind: 'save', save: 'WIS', range: 12, dmg: '2d6', type: 'fire', half: true },
+    frost_breath:  { name: 'Frost Breath (Recharge)', kind: 'aoe', save: 'CON', range: 3, radius: 2, dmg: '4d8', type: 'cold', half: true, uses: 1 },
+    fire_breath:   { name: 'Fire Breath (Recharge)', kind: 'aoe', save: 'DEX', range: 3, radius: 2, dmg: '7d6', type: 'fire', half: true, uses: 1 },
+    terrify_roar:  { name: 'Terrifying Roar', kind: 'save', save: 'WIS', range: 6, dmg: '2d6', type: 'psychic', half: true, uses: 1 }
+  };
+
+  // 5.5e Bestiary templates for spawned monsters
+  const BESTIARY = {
+    'Goblin':              { ac: 15, hp: 7,  speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow'], spellDC: 11 },
+    'Goblin Alpha':        { ac: 16, hp: 21, speed: 6, init: 2, attackMod: 5, dmgFormula: '1d8+3',  dmgType: 'slashing',    weaponName: 'Scimitar',   abilities: ['shortbow'], spellDC: 12 },
+    'Orc':                 { ac: 13, hp: 15, speed: 6, init: 1, attackMod: 5, dmgFormula: '1d12+3', dmgType: 'slashing',    weaponName: 'Greataxe',   abilities: ['javelin'], spellDC: 12 },
+    'Skeleton':            { ac: 13, hp: 13, speed: 6, init: 2, attackMod: 4, dmgFormula: '1d6+2',  dmgType: 'piercing',    weaponName: 'Shortsword', abilities: ['shortbow'], spellDC: 11 },
+    'Owlbear':             { ac: 13, hp: 59, speed: 8, init: 1, attackMod: 7, dmgFormula: '2d8+5',  dmgType: 'slashing',    weaponName: 'Rend',       abilities: ['terrify_roar'], spellDC: 13 },
+    'Troll':               { ac: 15, hp: 84, speed: 6, init: 1, attackMod: 7, dmgFormula: '2d6+4',  dmgType: 'slashing',    weaponName: 'Claw',       abilities: [], spellDC: 14 },
+    'Red Dragon Wyrmling': { ac: 17, hp: 75, speed: 6, init: 0, attackMod: 6, dmgFormula: '1d10+4', dmgType: 'piercing',    weaponName: 'Bite',       abilities: ['fire_breath'], spellDC: 13 }
+  };
+
+  const rollD20 = () => Math.floor(Math.random() * 20) + 1;
+  const statMod = (v) => Math.floor(((v || 10) - 10) / 2);
+  const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+  const sideOf = (ent) => (ent.team === 'player' || ent.team === 'ally') ? 'party' : 'foe';
+  const isHostile = (a, b) => sideOf(a) !== sideOf(b);
+
+  // Roll a formula like "2d6+4" or "1d6+4+3d6"; doubleDice for critical hits
+  function rollDice(formula, doubleDice = false) {
+    const terms = String(formula).replace(/\s/g, '').match(/[+-]?[^+-]+/g) || [];
+    const rolls = [];
+    let total = 0;
+    terms.forEach(term => {
+      const sign = term.startsWith('-') ? -1 : 1;
+      const body = term.replace(/^[+-]/, '');
+      const m = body.match(/^(\d+)d(\d+)$/i);
+      if (m) {
+        const count = parseInt(m[1], 10) * (doubleDice ? 2 : 1);
+        const sides = parseInt(m[2], 10);
+        for (let i = 0; i < count; i++) {
+          const r = Math.floor(Math.random() * sides) + 1;
+          rolls.push(r);
+          total += sign * r;
+        }
+      } else {
+        total += sign * (parseInt(body, 10) || 0);
+      }
+    });
+    return { total: Math.max(0, total), rolls };
+  }
+
+  // Build a battlemat unit from a party character sheet
+  function buildPartyEntity(p, x, y, color) {
+    const s = p.stats || {};
+    const lvl = p.level || 5;
+    const pb = Math.ceil(1 + lvl / 4);
+    const role = (p.classRole || '').toLowerCase();
+    const strM = statMod(s.str), dexM = statMod(s.dex);
+    const castStat = role.includes('cleric') || role.includes('druid') || role.includes('ranger') ? 'wis'
+      : (role.includes('wizard') || role.includes('artificer') ? 'int' : 'cha');
+    const castM = statMod(s[castStat]);
+
+    let abilities = [];
+    let dmgFormula = `1d8+${Math.max(strM, dexM)}`;
+    let weaponName = 'Weapon';
+    let dmgType = 'slashing';
+    let spellSlots = {};
+    if (role.includes('barbarian')) {
+      abilities = ['javelin']; dmgFormula = `1d12+${strM + 2}`; weaponName = 'Greataxe (Rage)';
+    } else if (role.includes('cleric')) {
+      abilities = ['sacred_flame', 'guiding_bolt', 'cure_wounds', 'healing_word'];
+      dmgFormula = `1d8+${strM}`; weaponName = 'Mace'; dmgType = 'bludgeoning';
+      spellSlots = { 1: { max: 4, current: 4 }, 2: { max: 3, current: 3 }, 3: { max: 2, current: 2 } };
+    } else if (role.includes('rogue')) {
+      abilities = ['psychic_blade', 'shortbow']; dmgFormula = `1d6+${dexM}+3d6`; weaponName = 'Psychic Blade + Sneak Attack'; dmgType = 'psychic';
+    } else if (role.includes('wizard') || role.includes('sorcerer')) {
+      abilities = ['firebolt', 'magic_missile', 'thunderwave', 'misty_step', 'scorching_ray', 'fireball'];
+      dmgFormula = `1d6+${Math.max(strM, dexM)}`; weaponName = 'Quarterstaff'; dmgType = 'bludgeoning';
+      spellSlots = { 1: { max: 4, current: 4 }, 2: { max: 3, current: 3 }, 3: { max: 2, current: 2 } };
+    } else if (role.includes('ranger')) {
+      abilities = ['longbow', 'cure_wounds'];
+      spellSlots = { 1: { max: 4, current: 4 }, 2: { max: 2, current: 2 } };
+    } else {
+      abilities = ['javelin'];
+    }
+    const speedFt = parseInt(String(p.speed || '30'), 10) || 30;
+    return {
+      id: p.id,
+      partyId: p.id,
+      name: p.name,
+      team: 'player',
+      color: color || '#3b82f6',
+      avatar: (p.name || 'PC').substring(0, 2).toUpperCase(),
+      x, y,
+      hp: p.hpCurrent !== undefined ? p.hpCurrent : p.hpMax,
+      maxHp: p.hpMax || 30,
+      ac: p.ac || 14,
+      speed: Math.round(speedFt / 5),
+      movementLeft: Math.round(speedFt / 5),
+      init: parseInt(p.initiativeMod, 10) || dexM,
+      stats: s,
+      level: lvl,
+      classRole: p.classRole,
+      playerName: p.playerName,
+      attackMod: Math.max(strM, dexM) + pb,
+      spellAttack: castM + pb,
+      spellDC: 8 + pb + castM,
+      dmgFormula, dmgType, weaponName,
+      abilities,
+      spellSlots
+    };
+  }
+
+  function buildMonsterEntity(name, x, y, team = 'enemy', overrides = {}) {
+    const t = BESTIARY[name] || { ac: 14, hp: 20, speed: 6, init: 1, attackMod: 4, dmgFormula: '1d8+2', dmgType: 'slashing', weaponName: 'Strike', abilities: [], spellDC: 12 };
+    return Object.assign({
+      id: 'mon_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name,
+      team,
+      color: team === 'ally' ? '#14b8a6' : '#ef4444',
+      avatar: name.substring(0, 2).toUpperCase(),
+      x, y,
+      hp: t.hp, maxHp: t.hp, ac: t.ac,
+      speed: t.speed, movementLeft: t.speed,
+      init: t.init,
+      attackMod: t.attackMod, spellAttack: t.attackMod, spellDC: t.spellDC,
+      dmgFormula: t.dmgFormula, dmgType: t.dmgType, weaponName: t.weaponName,
+      abilities: [...t.abilities],
+      abilityUses: {}
+    }, overrides);
+  }
 
   // Populate Initial Entities from Aetheria Party & Monsters
   const partyData = worldState.data.partyCharacters || [];
-  cState.entities = [
-    {
-      id: 'pc-1',
-      name: partyData[0]?.name || 'Theron',
-      team: 'player',
-      color: '#3b82f6',
-      avatar: 'TH',
-      x: 3,
-      y: 6,
-      hp: partyData[0]?.hpCurrent || 58,
-      maxHp: partyData[0]?.hpMax || 58,
-      ac: partyData[0]?.ac || 16,
-      speed: 7,
-      movementLeft: 7,
-      isReady: false,
-      spellSlots: {},
-      attackMod: +7,
-      dmgFormula: '1d12+4',
-      dmgType: 'slashing'
-    },
-    {
-      id: 'pc-2',
-      name: partyData[1]?.name || 'Lyra Dawnbloom',
-      team: 'player',
-      color: '#10b981',
-      avatar: 'LY',
-      x: 3,
-      y: 5,
-      hp: partyData[1]?.hpCurrent || 38,
-      maxHp: partyData[1]?.hpMax || 38,
-      ac: partyData[1]?.ac || 18,
-      speed: 6,
-      movementLeft: 6,
-      isReady: false,
-      spellSlots: { 1: { max: 4, current: 4 }, 2: { max: 3, current: 3 }, 3: { max: 2, current: 2 } },
-      attackMod: +6,
-      dmgFormula: '1d8+3',
-      dmgType: 'radiant'
-    },
-    {
-      id: 'mon-1',
-      name: 'Ash Goblin Alpha',
-      team: 'enemy',
-      color: '#ef4444',
-      avatar: 'GA',
-      x: 8,
-      y: 5,
-      hp: 21,
-      maxHp: 21,
-      ac: 16,
-      speed: 6,
-      movementLeft: 6,
-      attackMod: +5,
-      dmgFormula: '1d8+3',
-      dmgType: 'slashing'
-    },
-    {
-      id: 'mon-2',
-      name: 'Frost Troll',
-      team: 'enemy',
-      color: '#0288d1',
-      avatar: 'FT',
-      x: 8,
-      y: 7,
-      hp: 65,
-      maxHp: 65,
-      ac: 15,
-      speed: 6,
-      movementLeft: 6,
-      attackMod: +7,
-      dmgFormula: '2d6+4',
-      dmgType: 'cold'
-    }
-  ];
-
+  const partyColors = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ec4899', '#06b6d4'];
+  cState.entities = partyData.slice(0, 6).map((p, i) => buildPartyEntity(p, 2 + (i % 2), 4 + i, partyColors[i % partyColors.length]));
+  cState.entities.push(
+    buildMonsterEntity('Goblin Alpha', 8, 4, 'enemy', { id: 'mon-1', name: 'Ash Goblin Alpha', avatar: 'GA', abilities: ['shortbow', 'ember_hex'] }),
+    buildMonsterEntity('Troll', 8, 7, 'enemy', { id: 'mon-2', name: 'Frost Troll', avatar: 'FT', color: '#0288d1', hp: 65, maxHp: 65, dmgType: 'cold', abilities: ['frost_breath'] })
+  );
   // Helper: Play Web Audio synthesized ping chime
   function playChime(isSecret = false) {
     try {
@@ -598,13 +677,269 @@ function initCombatEngine(container) {
       if (entity.team === 'player') {
         notifyToast(`Selected ${entity.name}`);
       } else {
-        notifyToast(`Enemy: ${entity.name} (AC: ${entity.ac}, HP: ${entity.hp}/${entity.maxHp})`);
+        notifyToast(`${entity.team === 'ally' ? 'Ally' : 'Enemy'}: ${entity.name} (AC: ${entity.ac}, HP: ${entity.hp}/${entity.maxHp})`);
       }
     } else {
       cState.selectedEntity = null;
       cState.selectedAction = null;
     }
     updateActionUi();
+  }
+
+  // ==========================================
+  // TURN / ACTION ECONOMY HELPERS
+  // ==========================================
+  function currentTurnEntity() {
+    const c = cState.combat;
+    if (!c.active || c.order.length === 0) return null;
+    return cState.entities.find(e => e.id === c.order[c.turnIndex]) || null;
+  }
+
+  function canAct(actor, isBonus = false) {
+    const c = cState.combat;
+    if (!c.active) return { ok: false, reason: 'Roll initiative to start combat first.' };
+    if (c.aiRunning) return { ok: false, reason: 'Wait for the current NPC turn to finish.' };
+    const cur = currentTurnEntity();
+    if (!cur || cur.id !== actor.id) return { ok: false, reason: `It is not ${actor.name}'s turn${cur ? ` (current: ${cur.name})` : ''}.` };
+    if (isBonus ? actor.bonusUsed : actor.actionUsed) {
+      return { ok: false, reason: isBonus ? 'Bonus action already used this turn.' : 'Action already used this turn.' };
+    }
+    return { ok: true };
+  }
+
+  function hasSlotFor(actor, level) {
+    if (!level || !actor.spellSlots || Object.keys(actor.spellSlots).length === 0) return true;
+    return Object.keys(actor.spellSlots).some(l => parseInt(l, 10) >= level && actor.spellSlots[l].current > 0);
+  }
+
+  function spendSlot(actor, level) {
+    if (!level || !actor.spellSlots || Object.keys(actor.spellSlots).length === 0) return null;
+    const lvls = Object.keys(actor.spellSlots).map(n => parseInt(n, 10)).filter(l => l >= level).sort((a, b) => a - b);
+    for (const l of lvls) {
+      if (actor.spellSlots[l].current > 0) { actor.spellSlots[l].current--; return l; }
+    }
+    return null;
+  }
+
+  function usableAbilities(actor) {
+    return (actor.abilities || []).filter(id => {
+      const ab = ABILITIES[id];
+      if (!ab) return false;
+      if (ab.uses && ((actor.abilityUses || {})[id] || 0) >= ab.uses) return false;
+      return hasSlotFor(actor, ab.level);
+    });
+  }
+
+  function describeAbility(actor, id) {
+    const ab = ABILITIES[id];
+    if (!ab) return id;
+    const parts = [];
+    parts.push(ab.level === 0 ? 'Cantrip' : (ab.level ? `Lvl ${ab.level}` : (ab.weapon ? 'Weapon' : 'Ability')));
+    if (ab.dmg) parts.push(`${ab.dmg} ${ab.type}`);
+    if (ab.heal) parts.push(`heal ${ab.heal}`);
+    if (ab.save) parts.push(`${ab.save} save DC ${actor.spellDC || 13}`);
+    if (ab.kind === 'attack') parts.push(`+${ab.weapon ? actor.attackMod : actor.spellAttack} to hit`);
+    if (ab.kind === 'auto') parts.push('auto-hit');
+    if (ab.centerSelf) parts.push(`${ab.radius * 5 + 5}ft around self`);
+    else if (ab.range) parts.push(ab.range <= 1 ? 'touch' : `${ab.range * 5}ft`);
+    if (ab.radius && !ab.centerSelf) parts.push(`${ab.radius * 5}ft radius`);
+    if (ab.bonus) parts.push('bonus action');
+    if (ab.uses) parts.push(`${Math.max(0, ab.uses - ((actor.abilityUses || {})[id] || 0))} use left`);
+    return `${ab.name} [${parts.join(' • ')}]`;
+  }
+
+  // ==========================================
+  // DAMAGE, HEALING & SAVES
+  // ==========================================
+  function pushFloater(ent, text, color) {
+    cState.effects.push({ text, x: ent.x * cState.tileSize + cState.tileSize / 2, y: ent.y * cState.tileSize + cState.tileSize / 2, color, life: 40, offset: 0 });
+  }
+
+  function syncPartyHp(ent) {
+    if (!ent.partyId) return;
+    const pc = (worldState.data.partyCharacters || []).find(p => p.id === ent.partyId);
+    if (pc) {
+      pc.hpCurrent = ent.hp;
+      worldState.saveData();
+    }
+  }
+
+  function applyDamage(target, amount, type, sourceName) {
+    target.hp = Math.max(0, target.hp - amount);
+    pushFloater(target, `-${amount}`, '#ef4444');
+    syncPartyHp(target);
+    if (target.hp === 0) {
+      if (target.team === 'player') logMsg(`💀 ${target.name} drops to 0 HP and falls unconscious!`, '#f87171');
+      else logMsg(`☠ ${target.name} is slain${sourceName ? ` by ${sourceName}` : ''}!`, '#fbbf24');
+    }
+  }
+
+  function applyHeal(target, amount) {
+    const wasDown = target.hp <= 0;
+    target.hp = Math.min(target.maxHp, target.hp + amount);
+    pushFloater(target, `+${amount}`, '#4ade80');
+    syncPartyHp(target);
+    if (wasDown && target.hp > 0) logMsg(`✨ ${target.name} is revived and back on their feet!`, '#4ade80');
+  }
+
+  function computeSaveMod(unit, statKey) {
+    const key = statKey.toLowerCase();
+    if (unit.stats && unit.stats[key] !== undefined) {
+      let mod = statMod(unit.stats[key]);
+      if (unit.classRole) {
+        const role = unit.classRole.toLowerCase();
+        const pb = Math.ceil(1 + (unit.level || 5) / 4);
+        if ((role.includes('barbarian') && (statKey === 'STR' || statKey === 'CON')) ||
+            (role.includes('fighter') && (statKey === 'STR' || statKey === 'CON')) ||
+            (role.includes('cleric') && (statKey === 'WIS' || statKey === 'CHA')) ||
+            (role.includes('rogue') && (statKey === 'DEX' || statKey === 'INT')) ||
+            (role.includes('ranger') && (statKey === 'STR' || statKey === 'DEX')) ||
+            (role.includes('wizard') && (statKey === 'INT' || statKey === 'WIS'))) {
+          mod += pb;
+        }
+      }
+      return mod;
+    }
+    const name = unit.name.toLowerCase();
+    if (name.includes('goblin')) return statKey === 'DEX' ? 2 : (statKey === 'STR' ? -1 : 0);
+    if (name.includes('troll')) return statKey === 'CON' ? 5 : (statKey === 'STR' ? 4 : (statKey === 'DEX' ? 1 : -1));
+    if (name.includes('dragon')) return statKey === 'STR' ? 4 : (statKey === 'DEX' ? 1 : (statKey === 'CON' ? 3 : 2));
+    if (name.includes('orc')) return statKey === 'STR' ? 3 : (statKey === 'CON' ? 3 : (statKey === 'INT' ? -2 : 0));
+    if (name.includes('skeleton')) return statKey === 'DEX' ? 2 : (statKey === 'CON' ? 2 : -1);
+    if (name.includes('owlbear')) return statKey === 'STR' ? 5 : (statKey === 'CON' ? 3 : 1);
+    return 2;
+  }
+
+  function rollerLabel(unit) {
+    return unit.team === 'player' && unit.playerName ? `${unit.name} (${unit.playerName})` : unit.name;
+  }
+
+  // Auto-rolls a saving throw for any unit (players use their real sheet stats)
+  function rollSaveFor(unit, statKey, dc, sourceLabel) {
+    const mod = computeSaveMod(unit, statKey);
+    const d20 = rollD20();
+    const total = d20 + mod;
+    const success = total >= dc;
+    const entry = {
+      rollerName: rollerLabel(unit),
+      rollerAvatar: unit.avatar || '🎲',
+      rollType: 'save',
+      label: `${statKey} Saving Throw`,
+      formula: `1d20 (${d20}) ${mod >= 0 ? '+' : '-'} ${Math.abs(mod)}`,
+      d20Result: d20,
+      total,
+      dc,
+      success,
+      advantageMode: 'normal',
+      note: `vs ${sourceLabel}`
+    };
+    worldState.logDiceRoll(entry);
+    appendRollToCombatLog(entry);
+    return success;
+  }
+
+  function rollWithMode(mode) {
+    const d1 = rollD20(), d2 = rollD20();
+    if (mode === 'ADVANTAGE') return { d20: Math.max(d1, d2), text: `1d20 [ADV: ${d1}, ${d2}]` };
+    if (mode === 'DISADVANTAGE') return { d20: Math.min(d1, d2), text: `1d20 [DIS: ${d1}, ${d2}]` };
+    return { d20: d1, text: `1d20 (${d1})` };
+  }
+
+  function makeAttackRoll(actor, target, bonus, label, dmgFormula, dmgType, advMode = 'NORMAL') {
+    const r = rollWithMode(advMode);
+    const total = r.d20 + bonus;
+    const crit = r.d20 === 20;
+    const hit = crit || (r.d20 !== 1 && total >= target.ac);
+    const entry = {
+      rollerName: rollerLabel(actor),
+      rollerAvatar: actor.avatar || '🎲',
+      rollType: 'attack',
+      label: `${label} → ${target.name}`,
+      formula: `${r.text} ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+      d20Result: r.d20,
+      total,
+      dc: target.ac,
+      success: hit,
+      advantageMode: advMode.toLowerCase(),
+      note: `vs AC ${target.ac}`
+    };
+    worldState.logDiceRoll(entry);
+    appendRollToCombatLog(entry);
+    if (hit) {
+      const dmg = rollDice(dmgFormula, crit).total;
+      logMsg(`${crit ? '💥 CRITICAL! ' : ''}${actor.name}'s ${label} hits ${target.name} for ${dmg} ${dmgType} damage.`, isHostile(actor, { team: 'player' }) ? '#f87171' : '#4ade80');
+      applyDamage(target, dmg, dmgType, actor.name);
+    } else {
+      logMsg(`${actor.name}'s ${label} misses ${target.name}.`, '#94a3b8');
+      pushFloater(target, 'MISS', '#94a3b8');
+    }
+    return hit;
+  }
+
+  function performWeaponAttack(actor, target, advMode = 'NORMAL') {
+    return makeAttackRoll(actor, target, actor.attackMod || 4, actor.weaponName || 'Strike', actor.dmgFormula || '1d6+2', actor.dmgType || 'slashing', advMode);
+  }
+
+  // Execute a spell / ability. Hostile casters (enemies, hostile NPCs) target the party the same way players target enemies.
+  function executeAbility(actor, id, target, tile, advMode = 'NORMAL') {
+    const ab = ABILITIES[id];
+    if (!ab) return false;
+    const slotUsed = spendSlot(actor, ab.level);
+    if (ab.uses) {
+      actor.abilityUses = actor.abilityUses || {};
+      actor.abilityUses[id] = (actor.abilityUses[id] || 0) + 1;
+    }
+    const dc = actor.spellDC || 13;
+    const castLabel = `${actor.name} uses ${ab.name}${slotUsed ? ` (Lvl ${slotUsed} slot)` : ''}`;
+    const castColor = sideOf(actor) === 'foe' ? '#fb7185' : '#c084fc';
+
+    if (ab.kind === 'attack') {
+      logMsg(`${castLabel} at ${target.name}.`, castColor);
+      makeAttackRoll(actor, target, ab.weapon ? actor.attackMod : actor.spellAttack, ab.name, ab.dmg, ab.type, advMode);
+    } else if (ab.kind === 'auto') {
+      const dmg = rollDice(ab.dmg).total;
+      logMsg(`${castLabel}: ${target.name} takes ${dmg} ${ab.type} damage (auto-hit).`, castColor);
+      applyDamage(target, dmg, ab.type, actor.name);
+    } else if (ab.kind === 'save') {
+      logMsg(`${castLabel} on ${target.name} (${ab.save} save DC ${dc}).`, castColor);
+      const saved = rollSaveFor(target, ab.save, dc, `${actor.name}'s ${ab.name}`);
+      const full = rollDice(ab.dmg).total;
+      const dmg = saved ? (ab.half ? Math.floor(full / 2) : 0) : full;
+      if (dmg > 0) {
+        logMsg(`  ↳ ${target.name} ${saved ? 'partially resists and' : ''} takes ${dmg} ${ab.type} damage.`, castColor);
+        applyDamage(target, dmg, ab.type, actor.name);
+      } else {
+        logMsg(`  ↳ ${target.name} avoids the effect entirely.`, '#94a3b8');
+        pushFloater(target, 'SAVED', '#93c5fd');
+      }
+    } else if (ab.kind === 'aoe') {
+      const center = ab.centerSelf ? { x: actor.x, y: actor.y } : tile;
+      logMsg(`${castLabel} centred on (${center.x}, ${center.y}) — ${ab.save} save DC ${dc}!`, castColor);
+      cState.effects.push({ kind: 'aoe', gx: center.x, gy: center.y, radius: ab.radius, color: ab.type === 'cold' ? '#38bdf8' : (ab.type === 'thunder' ? '#a78bfa' : '#f97316'), life: 30, maxLife: 30 });
+      const victims = cState.entities.filter(e => e.hp > 0 && dist(e, center) <= ab.radius && !(ab.centerSelf && e.id === actor.id));
+      if (victims.length === 0) logMsg('  ↳ No creatures caught in the area.', '#94a3b8');
+      const full = rollDice(ab.dmg).total;
+      victims.forEach(v => {
+        const saved = rollSaveFor(v, ab.save, dc, `${actor.name}'s ${ab.name}`);
+        const dmg = saved ? (ab.half ? Math.floor(full / 2) : 0) : full;
+        logMsg(`  ↳ ${v.name} ${saved ? 'saves and takes' : 'fails and takes'} ${dmg} ${ab.type} damage.`, castColor);
+        if (dmg > 0) applyDamage(v, dmg, ab.type, actor.name);
+      });
+    } else if (ab.kind === 'heal') {
+      const amt = rollDice(ab.heal).total;
+      logMsg(`${castLabel} on ${target.name}, restoring ${amt} HP.`, '#4ade80');
+      applyHeal(target, amt);
+    } else if (ab.kind === 'teleport') {
+      actor.x = tile.x;
+      actor.y = tile.y;
+      logMsg(`${castLabel} and teleports to (${tile.x}, ${tile.y}).`, castColor);
+    }
+    return true;
+  }
+
+  function markActionSpent(actor, ab) {
+    if (ab && ab.bonus) actor.bonusUsed = true;
+    else actor.actionUsed = true;
   }
 
   function handleActionClick(gx, gy, clickedEntity) {
@@ -614,65 +949,84 @@ function initCombatEngine(container) {
       notifyToast(`You cannot control ${actor.name}! (Controlled by ${worldState.getCharacterOwnerName(actor.id, actor)})`);
       return;
     }
+    if (actor.hp <= 0) return notifyToast(`${actor.name} is unconscious.`);
     const act = cState.selectedAction;
+    const c = cState.combat;
 
     if (act === 'MOVE') {
+      if (c.active) {
+        const cur = currentTurnEntity();
+        if (c.aiRunning) return notifyToast('Wait for the current NPC turn to finish.');
+        if (!cur || cur.id !== actor.id) return notifyToast(`It is not ${actor.name}'s turn.`);
+      }
       if (clickedEntity) return notifyToast('Space occupied!');
-      const dist = Math.max(Math.abs(actor.x - gx), Math.abs(actor.y - gy));
-      if (dist > actor.movementLeft) return notifyToast(`Not enough move! (${actor.movementLeft} left)`);
+      const d = Math.max(Math.abs(actor.x - gx), Math.abs(actor.y - gy));
+      if (c.active && d > actor.movementLeft) return notifyToast(`Not enough movement! (${actor.movementLeft * 5}ft left)`);
       actor.x = gx;
       actor.y = gy;
-      actor.movementLeft -= dist;
-      logMsg(`${actor.name} advanced ${dist} tile(s).`, 'var(--text-primary)');
-      updateActionUi();
-    } else if (act === 'ATTACK') {
-      if (!clickedEntity || clickedEntity.team !== 'enemy') return notifyToast('Must target an enemy!');
-      const dist = Math.max(Math.abs(actor.x - clickedEntity.x), Math.abs(actor.y - clickedEntity.y));
-      if (dist > 1) return notifyToast('Target out of melee reach!');
-      cState.actionQueue.push({
-        type: 'ATTACK',
-        actorId: actor.id,
-        targetId: clickedEntity.id,
-        advantageMode: cState.advantageMode,
-        desc: `${actor.name} prepares to strike ${clickedEntity.name}`
-      });
-      notifyToast('Attack queued.');
-      renderQueue();
-    } else if (act === 'CAST') {
-      const spellId = cState.selectedSpellId;
-      if (spellId === 'misty_step') {
-        if (clickedEntity) return notifyToast('Tile occupied!');
-        actor.x = gx;
-        actor.y = gy;
-        logMsg(`${actor.name} casts Misty Step and teleports!`, '#c084fc');
-        notifyToast('Teleported immediately.');
-      } else if (spellId === 'fireball' || spellId === 'thunderwave') {
-        cState.actionQueue.push({
-          type: 'CAST',
-          spellId: spellId,
-          actorId: actor.id,
-          targetX: gx,
-          targetY: gy,
-          desc: `${actor.name} casts ${spellId.toUpperCase()} at (${gx}, ${gy})`
-        });
-        notifyToast('Spell queued.');
-        renderQueue();
-      } else {
-        if (!clickedEntity || clickedEntity.team !== 'enemy') return notifyToast('Target an enemy!');
-        cState.actionQueue.push({
-          type: 'CAST',
-          spellId: spellId,
-          actorId: actor.id,
-          targetId: clickedEntity.id,
-          advantageMode: cState.advantageMode,
-          desc: `${actor.name} casts ${spellId} at ${clickedEntity.name}`
-        });
-        notifyToast('Spell queued.');
-        renderQueue();
+      if (c.active) actor.movementLeft -= d;
+      logMsg(`${actor.name} moves ${d * 5}ft.`, 'var(--text-primary)');
+      if (c.active && actor.movementLeft > 0) {
+        updateActionUi();
+        renderTurnUi();
+        return; // keep MOVE selected while movement remains
       }
+    } else if (act === 'ATTACK') {
+      const chk = canAct(actor, false);
+      if (!chk.ok) return notifyToast(chk.reason);
+      if (!clickedEntity || clickedEntity.hp <= 0 || !isHostile(actor, clickedEntity)) return notifyToast('Target a hostile creature!');
+      if (dist(actor, clickedEntity) > (actor.reach || 1)) return notifyToast('Target out of melee reach! Use a ranged ability or move closer.');
+      performWeaponAttack(actor, clickedEntity, cState.advantageMode);
+      actor.actionUsed = true;
+    } else if (act === 'CAST') {
+      const id = cState.selectedSpellId;
+      const ab = ABILITIES[id];
+      if (!ab) return notifyToast('Choose a spell or ability first.');
+      const chk = canAct(actor, !!ab.bonus);
+      if (!chk.ok) return notifyToast(chk.reason);
+      if (!usableAbilities(actor).includes(id)) return notifyToast(`${ab.name} is unavailable (no slots / uses left).`);
+
+      const tile = { x: gx, y: gy };
+      if (ab.kind === 'attack' || ab.kind === 'auto' || ab.kind === 'save') {
+        if (!clickedEntity || clickedEntity.hp <= 0 || !isHostile(actor, clickedEntity)) return notifyToast('Target a hostile creature!');
+        if (dist(actor, clickedEntity) > ab.range) return notifyToast(`Out of range (${ab.range * 5}ft).`);
+        executeAbility(actor, id, clickedEntity, tile, cState.advantageMode);
+      } else if (ab.kind === 'heal') {
+        if (!clickedEntity || isHostile(actor, clickedEntity)) return notifyToast('Target a friendly creature to heal!');
+        if (dist(actor, clickedEntity) > ab.range) return notifyToast(`Out of range (${ab.range <= 1 ? 'touch' : ab.range * 5 + 'ft'}).`);
+        executeAbility(actor, id, clickedEntity, tile);
+      } else if (ab.kind === 'aoe') {
+        if (!ab.centerSelf && dist(actor, tile) > ab.range) return notifyToast(`Out of range (${ab.range * 5}ft).`);
+        executeAbility(actor, id, null, tile);
+      } else if (ab.kind === 'teleport') {
+        if (clickedEntity) return notifyToast('Tile occupied!');
+        if (dist(actor, tile) > ab.range) return notifyToast(`Out of range (${ab.range * 5}ft).`);
+        executeAbility(actor, id, null, tile);
+      }
+      markActionSpent(actor, ab);
     }
     cState.selectedAction = null;
     updateActionUi();
+    renderTurnUi();
+    checkCombatEnd();
+  }
+
+  function populateAbilitySelect(actor) {
+    const spellSelect = container.querySelector('#combat-spell-select');
+    if (!spellSelect) return;
+    const ids = (actor.abilities || []).filter(id => ABILITIES[id]);
+    const usable = usableAbilities(actor);
+    const sig = actor.id + '|' + ids.map(id => describeAbility(actor, id) + usable.includes(id)).join('|');
+    if (spellSelect.dataset.sig !== sig) {
+      spellSelect.innerHTML = ids.length
+        ? ids.map(id => `<option value="${id}" ${usable.includes(id) ? '' : 'disabled'}>${describeAbility(actor, id)}${usable.includes(id) ? '' : ' — unavailable'}</option>`).join('')
+        : '<option value="">No spells or abilities</option>';
+      spellSelect.dataset.sig = sig;
+    }
+    if (!ids.includes(cState.selectedSpellId) || !usable.includes(cState.selectedSpellId)) {
+      cState.selectedSpellId = usable[0] || null;
+    }
+    if (cState.selectedSpellId) spellSelect.value = cState.selectedSpellId;
   }
 
   function updateActionUi() {
@@ -684,11 +1038,21 @@ function initCombatEngine(container) {
     const dmPushPanel = container.querySelector('#combat-dm-push-panel');
     const isDm = Boolean(worldState.prefs && worldState.prefs.dmMode);
 
-    container.querySelectorAll('.combat-act-btn').forEach(b => b.classList.remove('active'));
+    container.querySelectorAll('.combat-act-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.action === cState.selectedAction);
+    });
 
     if (actor) {
       const canControl = worldState.canControlCharacter(actor.id, actor);
       const ownerName = worldState.getCharacterOwnerName(actor.id, actor);
+      const cur = currentTurnEntity();
+      const isTurn = cState.combat.active && cur && cur.id === actor.id;
+      const teamLabel = actor.team === 'player' ? 'Player' : (actor.team === 'ally' ? 'Allied NPC' : 'Enemy');
+      const teamBg = actor.team === 'player' ? 'rgba(59, 130, 246, 0.2)' : (actor.team === 'ally' ? 'rgba(20, 184, 166, 0.2)' : 'rgba(239, 68, 68, 0.2)');
+      const teamFg = actor.team === 'player' ? '#93c5fd' : (actor.team === 'ally' ? '#5eead4' : '#fca5a5');
+      const slots = actor.spellSlots && Object.keys(actor.spellSlots).length
+        ? Object.keys(actor.spellSlots).map(l => `L${l}: ${actor.spellSlots[l].current}/${actor.spellSlots[l].max}`).join(' · ')
+        : '';
 
       info.innerHTML = `
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
@@ -696,15 +1060,19 @@ function initCombatEngine(container) {
           <div>
             <strong style="color: var(--text-gold); font-size: 0.9rem;">${actor.name}</strong>
             <span style="font-size: 0.7rem; color: var(--text-muted); margin-left: 0.35rem;">(AC ${actor.ac})</span>
-            <span class="badge" style="font-size: 0.65rem; margin-left: 0.35rem; background: ${actor.team === 'player' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color: ${actor.team === 'player' ? '#93c5fd' : '#fca5a5'};">
-              ${actor.team === 'player' ? 'Player' : 'Enemy / NPC'}
-            </span>
+            <span class="badge" style="font-size: 0.65rem; margin-left: 0.35rem; background: ${teamBg}; color: ${teamFg};">${teamLabel}</span>
           </div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-secondary);">
-          <span>HP: <strong style="color: #4ade80;">${actor.hp}</strong> / ${actor.maxHp}</span>
-          <span>Move: <strong style="color: #60a5fa;">${actor.movementLeft}</strong>/${actor.speed}</span>
+          <span>HP: <strong style="color: ${actor.hp <= 0 ? '#f87171' : '#4ade80'};">${actor.hp}</strong> / ${actor.maxHp}</span>
+          <span>Move: <strong style="color: #60a5fa;">${actor.movementLeft * 5}</strong>/${actor.speed * 5}ft</span>
         </div>
+        ${slots ? `<div style="font-size: 0.68rem; color: #c4b5fd; margin-top: 0.2rem;">Spell slots: ${slots}</div>` : ''}
+        ${cState.combat.active ? `
+          <div style="margin-top: 0.3rem; font-size: 0.7rem; color: ${isTurn ? '#fbbf24' : 'var(--text-muted)'};">
+            ${isTurn ? '▶ Acting now' : `⏳ Waiting — current turn: ${cur ? cur.name : '—'}`}
+          </div>
+        ` : ''}
         ${!canControl ? `
           <div style="margin-top: 0.45rem; padding: 0.35rem 0.55rem; background: rgba(148, 163, 184, 0.08); border: 1px dashed rgba(148, 163, 184, 0.35); border-radius: var(--radius-sm); font-size: 0.7rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between;">
             <span>🔒 Controlled by: <strong style="color: var(--text-gold);">${ownerName}</strong></span>
@@ -714,23 +1082,17 @@ function initCombatEngine(container) {
       `;
 
       // ONLY the player who owns this character or the DM has action controls
-      if (canControl) {
+      if (canControl && actor.hp > 0) {
         controls.style.display = 'flex';
-        if (cState.selectedAction === 'CAST') spellSelect.style.display = 'block';
-        else spellSelect.style.display = 'none';
+        populateAbilitySelect(actor);
+        spellSelect.style.display = cState.selectedAction === 'CAST' ? 'block' : 'none';
       } else {
         controls.style.display = 'none';
         spellSelect.style.display = 'none';
       }
 
       // 1. Show Saving Throws panel for DM controlled units (ONLY for DM)
-      if (unitSavePanel) {
-        if (isDm) {
-          unitSavePanel.style.display = 'block';
-        } else {
-          unitSavePanel.style.display = 'none';
-        }
-      }
+      if (unitSavePanel) unitSavePanel.style.display = isDm ? 'block' : 'none';
 
       // 2. Show Push Request panel if DM mode active AND a Player Character is selected
       if (dmPushPanel) {
@@ -743,14 +1105,13 @@ function initCombatEngine(container) {
         }
       }
     } else {
-      info.innerHTML = 'Select a unit on the battlemat to plan moves.';
+      info.innerHTML = cState.combat.active ? 'Select a unit on the battlemat.' : 'Select a unit on the battlemat to reposition it.';
       controls.style.display = 'none';
       spellSelect.style.display = 'none';
       if (unitSavePanel) unitSavePanel.style.display = 'none';
       if (dmPushPanel) dmPushPanel.style.display = 'none';
     }
   }
-
   // Helper: Append a real-time roll into the combat log stream
   function appendRollToCombatLog(roll) {
     const stream = container.querySelector('#combat-log-stream');
@@ -784,27 +1145,7 @@ function initCombatEngine(container) {
   // Roll Saving Throw for DM-controlled unit
   function rollUnitSavingThrow(unit, statKey, dcVal) {
     const dc = dcVal ? parseInt(dcVal, 10) : null;
-    let mod = 0;
-    const name = unit.name.toLowerCase();
-    if (unit.stats && unit.stats[statKey.toLowerCase()] !== undefined) {
-      mod = Math.floor((unit.stats[statKey.toLowerCase()] - 10) / 2);
-    } else {
-      if (name.includes('goblin')) {
-        mod = statKey === 'DEX' ? 2 : (statKey === 'STR' ? -1 : (statKey === 'CON' ? 0 : 0));
-      } else if (name.includes('troll')) {
-        mod = statKey === 'CON' ? 5 : (statKey === 'STR' ? 4 : (statKey === 'WIS' ? -1 : (statKey === 'DEX' ? 1 : -1)));
-      } else if (name.includes('dragon')) {
-        mod = statKey === 'STR' ? 4 : (statKey === 'DEX' ? 1 : (statKey === 'CON' ? 3 : 2));
-      } else if (name.includes('orc')) {
-        mod = statKey === 'STR' ? 3 : (statKey === 'CON' ? 3 : (statKey === 'INT' ? -2 : 0));
-      } else if (name.includes('skeleton')) {
-        mod = statKey === 'DEX' ? 2 : (statKey === 'CON' ? 2 : -1);
-      } else if (name.includes('owlbear')) {
-        mod = statKey === 'STR' ? 5 : (statKey === 'CON' ? 3 : 1);
-      } else {
-        mod = 2;
-      }
-    }
+    const mod = computeSaveMod(unit, statKey);
 
     const d1 = Math.floor(Math.random() * 20) + 1;
     const d2 = Math.floor(Math.random() * 20) + 1;
@@ -1013,168 +1354,428 @@ function initCombatEngine(container) {
     renderCombatPendingBanner();
   }
 
-  function renderQueue() {
-    const list = container.querySelector('#combat-queue-list');
-    list.innerHTML = '';
-    if (cState.actionQueue.length === 0) {
-      list.innerHTML = '<div style="font-size: 0.75rem; font-style: italic; color: var(--text-muted); text-align: center; margin-top: 0.75rem;">Queue is empty.</div>';
+  // ==========================================
+  // INITIATIVE & TURN SEQUENCING ENGINE
+  // ==========================================
+  function rollInitiative() {
+    const alive = cState.entities.filter(e => e.hp > 0);
+    if (alive.length === 0) return;
+
+    logMsg('⚔️ --- INITIATIVE ROLLS ---', 'var(--text-gold)');
+    const rolls = alive.map(ent => {
+      const d20 = rollD20();
+      const bonus = ent.init !== undefined ? ent.init : (statMod(ent.stats?.dex) || 0);
+      const total = d20 + bonus;
+      const entry = {
+        rollerName: rollerLabel(ent),
+        rollerAvatar: ent.avatar || '🎲',
+        rollType: 'initiative',
+        label: 'Initiative',
+        formula: `1d20 (${d20}) ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+        d20Result: d20,
+        total,
+        dc: null,
+        success: null,
+        advantageMode: 'normal',
+        note: `Combat Turn Order`
+      };
+      worldState.logDiceRoll(entry);
+      appendRollToCombatLog(entry);
+      return { ent, total, tieBreaker: bonus };
+    });
+
+    // Sort descending by initiative, then by dex bonus
+    rolls.sort((a, b) => b.total - a.total || b.tieBreaker - a.tieBreaker);
+
+    cState.combat.active = true;
+    cState.combat.round = 1;
+    cState.combat.turnIndex = 0;
+    cState.combat.order = rolls.map(r => r.ent.id);
+
+    // Announce order in combat log
+    const orderStr = rolls.map((r, i) => `${i + 1}. ${r.ent.name} (${r.total})`).join(' → ');
+    logMsg(`Turn Order: ${orderStr}`, '#38bdf8');
+
+    updatePhaseHeader();
+    startTurn(cState.combat.order[0]);
+  }
+
+  function startTurn(entityId) {
+    const ent = cState.entities.find(e => e.id === entityId);
+    if (!ent || ent.hp <= 0) {
+      advanceTurn();
       return;
     }
-    cState.actionQueue.forEach((a, idx) => {
-      const actor = cState.entities.find(e => e.id === a.actorId);
-      const canControl = worldState.canControlCharacter(a.actorId, actor);
-      const el = document.createElement('div');
-      el.style.background = 'var(--bg-tertiary)';
-      el.style.borderLeft = '3px solid var(--text-gold)';
-      el.style.borderRadius = 'var(--radius-sm)';
-      el.style.padding = '0.35rem 0.5rem';
-      el.style.fontSize = '0.75rem';
-      el.style.display = 'flex';
-      el.style.justifyContent = 'space-between';
-      el.style.alignItems = 'center';
-      el.innerHTML = `
-        <span>${a.desc}</span>
-        ${canControl ? `<button style="background: none; border: none; color: #ff5252; font-weight: bold; cursor: pointer;" title="Cancel action">&times;</button>` : `<span style="font-size: 0.65rem; color: var(--text-muted);">Queued</span>`}
-      `;
-      if (canControl) {
-        el.querySelector('button').addEventListener('click', () => {
-          cState.actionQueue.splice(idx, 1);
-          renderQueue();
-        });
-      }
-      list.appendChild(el);
-    });
-  }
 
-  function renderReadyList() {
-    const readyContainer = container.querySelector('#combat-party-ready-list');
-    const counter = container.querySelector('#combat-ready-counter');
-    const players = cState.entities.filter(e => e.team === 'player');
-    const readyCount = players.filter(e => e.isReady).length;
-    if (counter) counter.textContent = `${readyCount}/${players.length}`;
+    // Reset turn economy
+    ent.movementLeft = ent.speed;
+    ent.actionUsed = false;
+    ent.bonusUsed = false;
 
-    readyContainer.innerHTML = '';
-    players.forEach(p => {
-      const canControl = worldState.canControlCharacter(p.id, p);
-      const ownerName = worldState.getCharacterOwnerName(p.id, p);
-      const el = document.createElement('div');
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.justifyContent = 'space-between';
-      el.style.background = 'var(--bg-tertiary)';
-      el.style.borderRadius = '3px';
-      el.style.padding = '0.2rem 0.5rem';
-      el.style.fontSize = '0.75rem';
-      el.innerHTML = `
-        <span title="Controlled by: ${ownerName}">${p.name} ${!canControl ? `<span style="font-size: 0.65rem; color: var(--text-muted);">(${ownerName})</span>` : ''}</span>
-        <button style="border: none; border-radius: 3px; font-size: 0.65rem; font-weight: bold; padding: 1px 6px; cursor: ${canControl ? 'pointer' : 'default'}; opacity: ${canControl ? '1' : '0.6'}; background: ${p.isReady ? '#15803d' : 'var(--bg-secondary)'}; color: ${p.isReady ? '#fff' : 'var(--text-muted)'};" title="${canControl ? 'Click to toggle ready' : `Controlled by ${ownerName}`}">
-          ${p.isReady ? 'READY' : 'WAITING'}
-        </button>
-      `;
-      if (canControl) {
-        el.querySelector('button').addEventListener('click', () => {
-          p.isReady = !p.isReady;
-          renderReadyList();
-        });
-      }
-      readyContainer.appendChild(el);
-    });
-  }
-  renderReadyList();
+    // Auto-select acting entity for player clarity
+    cState.selectedEntity = ent;
+    cState.selectedAction = null;
 
-  // Execution Phase
-  async function resolveCombatRound() {
-    cState.phase = 'EXECUTION';
-    const indicator = container.querySelector('#combat-phase-indicator');
-    const resolveBtn = container.querySelector('#combat-resolve-btn');
-    indicator.textContent = 'EXECUTION';
-    indicator.style.background = '#7f1d1d';
-    indicator.style.color = '#fca5a5';
-    indicator.style.borderColor = '#ef4444';
-    resolveBtn.disabled = true;
+    logMsg(`▶ Round ${cState.combat.round}: ${ent.name}'s turn begins.`, sideOf(ent) === 'foe' ? '#f87171' : '#60a5fa');
+    notifyToast(`${ent.name}'s turn!`);
 
-    logMsg('--- Turn Execution Begins ---', 'var(--text-gold)');
-
-    for (const action of cState.actionQueue) {
-      const actor = cState.entities.find(e => e.id === action.actorId);
-      if (!actor || actor.hp <= 0) continue;
-
-      if (action.type === 'ATTACK') {
-        const target = cState.entities.find(e => e.id === action.targetId);
-        if (!target || target.hp <= 0) continue;
-
-        const d1 = Math.floor(Math.random() * 20) + 1;
-        const total = d1 + (actor.attackMod || 5);
-        if (d1 === 20 || total >= target.ac) {
-          const dmg = Math.floor(Math.random() * 8) + 4;
-          target.hp = Math.max(0, target.hp - dmg);
-          logMsg(`${actor.name} strikes ${target.name} (Rolled ${total} vs AC ${target.ac}) for ${dmg} dmg!`, '#4ade80');
-          cState.effects.push({ text: `-${dmg}`, x: target.x * cState.tileSize + cState.tileSize/2, y: target.y * cState.tileSize + cState.tileSize/2, color: '#ef4444', life: 35, offset: 0 });
-        } else {
-          logMsg(`${actor.name} misses ${target.name} (Rolled ${total} vs AC ${target.ac}).`, '#94a3b8');
-        }
-      } else if (action.type === 'CAST') {
-        if (action.spellId === 'fireball') {
-          const cx = action.targetX, cy = action.targetY;
-          logMsg(`${actor.name} detonates Fireball at (${cx}, ${cy})!`, '#fb923c');
-          const victims = cState.entities.filter(e => e.hp > 0 && Math.max(Math.abs(e.x - cx), Math.abs(e.y - cy)) <= 3);
-          victims.forEach(v => {
-            const dmg = Math.floor(Math.random() * 24) + 12;
-            v.hp = Math.max(0, v.hp - dmg);
-            logMsg(`  ↳ ${v.name} takes ${dmg} fire damage!`, '#fb923c');
-            cState.effects.push({ text: `-${dmg}`, x: v.x * cState.tileSize + cState.tileSize/2, y: v.y * cState.tileSize + cState.tileSize/2, color: '#f97316', life: 35, offset: 0 });
-          });
-        }
-      }
-      await new Promise(r => setTimeout(r, 600));
-    }
-
-    // Enemy AI Step
-    const aliveEnemies = cState.entities.filter(e => e.team === 'enemy' && e.hp > 0);
-    const alivePlayers = cState.entities.filter(e => e.team === 'player' && e.hp > 0);
-    if (aliveEnemies.length > 0 && alivePlayers.length > 0) {
-      logMsg('--- Hostile Counter-Action ---', '#f87171');
-      for (const enemy of aliveEnemies) {
-        const target = alivePlayers[0];
-        const dist = Math.max(Math.abs(enemy.x - target.x), Math.abs(enemy.y - target.y));
-        if (dist > 1) {
-          enemy.x += Math.sign(target.x - enemy.x);
-          enemy.y += Math.sign(target.y - enemy.y);
-        }
-        if (Math.max(Math.abs(enemy.x - target.x), Math.abs(enemy.y - target.y)) === 1) {
-          const dmg = Math.floor(Math.random() * 6) + 2;
-          target.hp = Math.max(0, target.hp - dmg);
-          logMsg(`${enemy.name} attacks ${target.name} for ${dmg} damage!`, '#ef4444');
-          cState.effects.push({ text: `-${dmg}`, x: target.x * cState.tileSize + cState.tileSize/2, y: target.y * cState.tileSize + cState.tileSize/2, color: '#ef4444', life: 35, offset: 0 });
-        }
-      }
-    }
-
-    // Cleanup & Reset Turn
-    cState.actionQueue = [];
-    cState.entities.forEach(e => {
-      if (e.team === 'player') e.isReady = false;
-      e.movementLeft = e.speed;
-    });
-    cState.phase = 'PLANNING';
-    indicator.textContent = 'PLANNING';
-    indicator.style.background = '#1e3a8a';
-    indicator.style.color = '#93c5fd';
-    indicator.style.borderColor = '#3b82f6';
-    resolveBtn.disabled = false;
-    renderQueue();
-    renderReadyList();
+    renderTurnUi();
+    renderInitiativeList();
     updateActionUi();
-    logMsg('--- Planning Phase Begins ---', 'var(--text-gold)');
+
+    // Check for AI-driven turn (Enemies & Allied NPCs)
+    if (ent.team !== 'player' && cState.autoNpc) {
+      runNpcTurn(ent);
+    }
   }
 
+  function advanceTurn() {
+    const c = cState.combat;
+    if (!c.active) return;
+
+    if (checkCombatEnd()) return;
+
+    // Find next alive entity in initiative order
+    let nextIdx = c.turnIndex + 1;
+    let wrapped = false;
+    if (nextIdx >= c.order.length) {
+      nextIdx = 0;
+      wrapped = true;
+      c.round++;
+      logMsg(`--- Round ${c.round} Begins ---`, 'var(--text-gold)');
+    }
+
+    // Scan for next entity with HP > 0
+    let loops = 0;
+    while (loops < c.order.length) {
+      const candidateId = c.order[nextIdx];
+      const candidate = cState.entities.find(e => e.id === candidateId);
+      if (candidate && candidate.hp > 0) {
+        c.turnIndex = nextIdx;
+        updatePhaseHeader();
+        startTurn(candidateId);
+        return;
+      }
+      nextIdx++;
+      if (nextIdx >= c.order.length) {
+        nextIdx = 0;
+        c.round++;
+        logMsg(`--- Round ${c.round} Begins ---`, 'var(--text-gold)');
+      }
+      loops++;
+    }
+
+    // If loop finishes, everyone is dead
+    endCombat();
+  }
+
+  function endCombat() {
+    cState.combat.active = false;
+    cState.combat.round = 0;
+    cState.combat.turnIndex = 0;
+    cState.combat.order = [];
+    cState.combat.aiRunning = false;
+    cState.selectedAction = null;
+
+    cState.entities.forEach(e => {
+      e.movementLeft = e.speed;
+      e.actionUsed = false;
+      e.bonusUsed = false;
+    });
+
+    logMsg('🏁 --- COMBAT ENDED ---', 'var(--text-gold)');
+    notifyToast('Combat has ended.');
+
+    updatePhaseHeader();
+    renderTurnUi();
+    renderInitiativeList();
+    updateActionUi();
+  }
+
+  function checkCombatEnd() {
+    if (!cState.combat.active) return false;
+    const aliveParty = cState.entities.filter(e => (e.team === 'player' || e.team === 'ally') && e.hp > 0);
+    const aliveFoes = cState.entities.filter(e => e.team === 'enemy' && e.hp > 0);
+
+    if (aliveFoes.length === 0) {
+      logMsg('🏆 Victory! All hostile threats have been eliminated.', '#4ade80');
+      notifyToast('Encounter Cleared!');
+      endCombat();
+      return true;
+    }
+    if (aliveParty.length === 0) {
+      logMsg('💀 Defeat! The entire party has fallen unconscious.', '#ef4444');
+      notifyToast('All party members defeated.');
+      endCombat();
+      return true;
+    }
+    return false;
+  }
+
+  function updatePhaseHeader() {
+    const indicator = container.querySelector('#combat-phase-indicator');
+    const roundBox = container.querySelector('#combat-round-counter');
+    const startBtn = container.querySelector('#combat-start-btn');
+    const endBtn = container.querySelector('#combat-end-btn');
+    const autoLabel = container.querySelector('#combat-auto-npc-label');
+
+    if (cState.combat.active) {
+      if (indicator) {
+        indicator.textContent = `ROUND ${cState.combat.round}`;
+        indicator.style.background = '#7f1d1d';
+        indicator.style.color = '#fca5a5';
+        indicator.style.borderColor = '#ef4444';
+      }
+      if (roundBox) roundBox.textContent = `${cState.combat.round}`;
+      if (startBtn) startBtn.style.display = 'none';
+      if (endBtn) endBtn.style.display = 'inline-block';
+      if (autoLabel) autoLabel.style.display = 'flex';
+    } else {
+      if (indicator) {
+        indicator.textContent = 'OUT OF COMBAT';
+        indicator.style.background = '#1e293b';
+        indicator.style.color = '#94a3b8';
+        indicator.style.borderColor = '#475569';
+      }
+      if (roundBox) roundBox.textContent = '—';
+      if (startBtn) startBtn.style.display = 'inline-block';
+      if (endBtn) endBtn.style.display = 'none';
+      if (autoLabel) autoLabel.style.display = 'none';
+    }
+  }
+
+  // ==========================================
+  // AUTONOMOUS NPC & MONSTER AI TURN
+  // Enemies target players/allies; Allied NPCs target enemies.
+  // ==========================================
+  async function runNpcTurn(npc) {
+    if (cState.combat.aiRunning) return;
+    cState.combat.aiRunning = true;
+    renderTurnUi();
+
+    try {
+      await new Promise(r => setTimeout(r, 700));
+      if (!cState.combat.active || npc.hp <= 0) return;
+
+      const oppTeam = isHostile(npc, { team: 'player' }) ? ['player', 'ally'] : ['enemy'];
+      const targets = cState.entities.filter(e => oppTeam.includes(e.team) && e.hp > 0);
+      if (targets.length === 0) return;
+
+      // Find nearest hostile target
+      targets.sort((a, b) => dist(npc, a) - dist(npc, b));
+      let primaryTarget = targets[0];
+
+      // 1. Check if NPC has an available AoE ability that catches multiple targets
+      const usable = usableAbilities(npc);
+      const aoeId = usable.find(id => ABILITIES[id]?.kind === 'aoe');
+      if (aoeId) {
+        const ab = ABILITIES[aoeId];
+        const center = ab.centerSelf ? { x: npc.x, y: npc.y } : { x: primaryTarget.x, y: primaryTarget.y };
+        if (dist(npc, center) <= (ab.range || 30)) {
+          executeAbility(npc, aoeId, null, center);
+          markActionSpent(npc, ab);
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
+
+      // 2. Movement Step: Step closer toward target if not in reach
+      if (!npc.actionUsed) {
+        const preferredReach = usable.some(id => ABILITIES[id]?.kind === 'attack' && ABILITIES[id].range > 2) ? 4 : 1;
+        while (dist(npc, primaryTarget) > preferredReach && npc.movementLeft > 0) {
+          const stepX = Math.sign(primaryTarget.x - npc.x);
+          const stepY = Math.sign(primaryTarget.y - npc.y);
+          const nextX = npc.x + stepX;
+          const nextY = npc.y + stepY;
+          const blocked = cState.entities.find(e => e.x === nextX && e.y === nextY && e.hp > 0);
+          if (blocked) break;
+          npc.x = nextX;
+          npc.y = nextY;
+          npc.movementLeft--;
+        }
+      }
+
+      // 3. Action Step: Spell, ranged ability, or weapon melee
+      if (!npc.actionUsed) {
+        const targetDist = dist(npc, primaryTarget);
+        // Look for targeted attack or save ability
+        const attackAbilityId = usable.find(id => {
+          const ab = ABILITIES[id];
+          return (ab?.kind === 'attack' || ab?.kind === 'save' || ab?.kind === 'auto') && targetDist <= (ab.range || 20);
+        });
+
+        if (attackAbilityId) {
+          const ab = ABILITIES[attackAbilityId];
+          executeAbility(npc, attackAbilityId, primaryTarget, { x: primaryTarget.x, y: primaryTarget.y });
+          markActionSpent(npc, ab);
+        } else if (targetDist <= (npc.reach || 1)) {
+          performWeaponAttack(npc, primaryTarget, 'NORMAL');
+          npc.actionUsed = true;
+        } else {
+          logMsg(`${npc.name} dashes forward, taking no further action.`, 'var(--text-muted)');
+          npc.actionUsed = true;
+        }
+        await new Promise(r => setTimeout(r, 800));
+      }
+    } finally {
+      cState.combat.aiRunning = false;
+      renderTurnUi();
+      advanceTurn();
+    }
+  }
+
+  // ==========================================
+  // RENDER INITIATIVE & TURN CONTROLS
+  // ==========================================
+  function renderTurnUi() {
+    const turnBox = container.querySelector('#combat-turn-box');
+    if (!turnBox) return;
+
+    if (!cState.combat.active) {
+      turnBox.innerHTML = `
+        <div style="font-size: 0.72rem; color: var(--text-muted); text-align: center; padding: 0.25rem 0;">
+          Combat not started. Click <strong>Roll Initiative</strong> to enter turn order.
+        </div>
+      `;
+      return;
+    }
+
+    const cur = currentTurnEntity();
+    if (!cur) {
+      turnBox.innerHTML = '';
+      return;
+    }
+
+    const isDm = Boolean(worldState.prefs && worldState.prefs.dmMode);
+    const canControl = isDm || worldState.canControlCharacter(cur.id, cur);
+    const isPlayer = cur.team === 'player';
+    const isAiBusy = cState.combat.aiRunning;
+
+    turnBox.innerHTML = `
+      <div style="background: var(--bg-secondary); border: 1px solid var(--border-gold); border-radius: var(--radius-sm); padding: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+          <div style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="font-size: 0.75rem; font-weight: bold; color: var(--text-gold);">ACTIVE TURN:</span>
+            <strong style="font-size: 0.85rem; color: #fff;">${cur.name}</strong>
+          </div>
+          <span class="badge" style="background: ${cur.team === 'player' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color: ${cur.team === 'player' ? '#93c5fd' : '#fca5a5'}; font-size: 0.65rem;">
+            ${cur.team === 'player' ? 'Player Turn' : 'NPC / Enemy'}
+          </span>
+        </div>
+
+        <!-- Economy Counters -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.25rem; font-size: 0.7rem; text-align: center; margin-bottom: 0.45rem;">
+          <div style="background: var(--bg-tertiary); padding: 3px; border-radius: 3px;">
+            <div style="color: var(--text-muted); font-size: 0.62rem;">ACTION</div>
+            <strong style="color: ${cur.actionUsed ? '#f87171' : '#4ade80'};">${cur.actionUsed ? 'SPENT' : 'READY'}</strong>
+          </div>
+          <div style="background: var(--bg-tertiary); padding: 3px; border-radius: 3px;">
+            <div style="color: var(--text-muted); font-size: 0.62rem;">BONUS</div>
+            <strong style="color: ${cur.bonusUsed ? '#f87171' : '#4ade80'};">${cur.bonusUsed ? 'SPENT' : 'READY'}</strong>
+          </div>
+          <div style="background: var(--bg-tertiary); padding: 3px; border-radius: 3px;">
+            <div style="color: var(--text-muted); font-size: 0.62rem;">MOVE</div>
+            <strong style="color: #60a5fa;">${cur.movementLeft * 5}ft</strong>
+          </div>
+        </div>
+
+        <!-- Turn Controls -->
+        <div style="display: flex; gap: 0.35rem;">
+          ${canControl ? `
+            <button id="combat-end-turn-btn" class="btn btn-sm btn-primary" ${isAiBusy ? 'disabled' : ''} style="flex: 1; font-size: 0.75rem; padding: 4px;">
+              ${isAiBusy ? 'Running turn...' : 'Pass / End Turn ➔'}
+            </button>
+          ` : `
+            <div style="flex: 1; font-size: 0.7rem; color: var(--text-muted); font-style: italic; text-align: center; padding: 3px 0;">
+              Waiting for ${cur.playerName || cur.name} to act...
+            </div>
+          `}
+          ${isDm ? `
+            <button id="combat-force-next-btn" class="btn btn-sm" title="DM Force Advance" style="font-size: 0.7rem; padding: 4px 8px; color: #fca5a5;">
+              Next (DM)
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+
+    const endTurnBtn = turnBox.querySelector('#combat-end-turn-btn');
+    if (endTurnBtn) {
+      endTurnBtn.addEventListener('click', () => {
+        advanceTurn();
+      });
+    }
+
+    const forceNextBtn = turnBox.querySelector('#combat-force-next-btn');
+    if (forceNextBtn) {
+      forceNextBtn.addEventListener('click', () => {
+        advanceTurn();
+      });
+    }
+  }
+
+  function renderInitiativeList() {
+    const list = container.querySelector('#combat-initiative-list');
+    if (!list) return;
+
+    if (!cState.combat.active || cState.combat.order.length === 0) {
+      list.innerHTML = '<div style="font-size: 0.72rem; color: var(--text-muted); font-style: italic; text-align: center; margin-top: 0.5rem;">Roll initiative to generate turn order.</div>';
+      return;
+    }
+
+    list.innerHTML = cState.combat.order.map((id, index) => {
+      const ent = cState.entities.find(e => e.id === id);
+      if (!ent) return '';
+      const isCurrent = index === cState.combat.turnIndex;
+      const isDead = ent.hp <= 0;
+      const isPlayer = ent.team === 'player';
+      const isAlly = ent.team === 'ally';
+      const borderCol = isCurrent ? '#fbbf24' : (isPlayer ? '#3b82f6' : (isAlly ? '#14b8a6' : '#ef4444'));
+
+      return `
+        <div class="initiative-entry" data-id="${ent.id}" style="display: flex; align-items: center; justify-content: space-between; background: ${isCurrent ? 'rgba(245, 158, 11, 0.15)' : 'var(--bg-tertiary)'}; border-left: 3px solid ${borderCol}; padding: 0.25rem 0.45rem; border-radius: var(--radius-sm); font-size: 0.72rem; opacity: ${isDead ? '0.45' : '1'}; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="font-weight: bold; color: ${isCurrent ? '#fbbf24' : 'var(--text-muted)'}; min-width: 14px;">${index + 1}.</span>
+            <span style="font-weight: bold; color: ${isCurrent ? '#fff' : 'var(--text-primary)'};">${ent.name}</span>
+            ${isCurrent ? '<span style="color: #fbbf24; font-size: 0.65rem;">▶ CURRENT</span>' : ''}
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="font-size: 0.68rem; color: ${isDead ? '#ef4444' : '#4ade80'};">${isDead ? 'DOWN' : `${ent.hp}/${ent.maxHp}`}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.initiative-entry').forEach(el => {
+      el.addEventListener('click', () => {
+        const ent = cState.entities.find(e => e.id === el.dataset.id);
+        if (ent) {
+          cState.selectedEntity = ent;
+          updateActionUi();
+        }
+      });
+    });
+  }
   // UI Event Bindings
-  container.querySelector('#combat-resolve-btn').addEventListener('click', resolveCombatRound);
-  container.querySelector('#combat-clear-queue-btn').addEventListener('click', () => {
-    cState.actionQueue = [];
-    renderQueue();
-    notifyToast('Queue cleared.');
-  });
+  const startBtn = container.querySelector('#combat-start-btn');
+  if (startBtn) startBtn.addEventListener('click', rollInitiative);
+
+  const endBtn = container.querySelector('#combat-end-btn');
+  if (endBtn) endBtn.addEventListener('click', endCombat);
+
+  const autoNpcChk = container.querySelector('#combat-auto-npc-chk');
+  if (autoNpcChk) {
+    autoNpcChk.addEventListener('change', (e) => {
+      cState.autoNpc = Boolean(e.target.checked);
+      notifyToast(cState.autoNpc ? 'Auto NPC turns enabled' : 'Auto NPC turns paused');
+    });
+  }
+
+  const spellSelectElem = container.querySelector('#combat-spell-select');
+  if (spellSelectElem) {
+    spellSelectElem.addEventListener('change', (e) => {
+      cState.selectedSpellId = e.target.value;
+    });
+  }
 
   // Action Buttons
   container.querySelectorAll('.combat-act-btn').forEach(btn => {
@@ -1270,6 +1871,7 @@ function initCombatEngine(container) {
   // Drop Unit Button
   container.querySelector('#combat-drop-unit-btn').addEventListener('click', () => {
     const val = container.querySelector('#combat-spawn-select').value;
+    const teamChoice = (container.querySelector('#combat-spawn-team')?.value) || 'enemy';
     const cx = Math.floor(cState.gridSize / 2);
     const cy = Math.floor(cState.gridSize / 2);
 
@@ -1277,40 +1879,29 @@ function initCombatEngine(container) {
       const pid = val.replace('party_', '');
       const pData = partyData.find(p => p.id === pid);
       if (pData) {
-        cState.entities.push({
-          id: 'pc_' + Date.now(),
-          name: pData.name,
-          team: 'player',
-          color: '#3b82f6',
-          avatar: pData.name.substring(0, 2).toUpperCase(),
-          x: cx,
-          y: cy,
-          hp: pData.hpCurrent,
-          maxHp: pData.hpMax,
-          ac: pData.ac,
-          speed: 6,
-          movementLeft: 6,
-          isReady: false
-        });
+        cState.entities.push(buildPartyEntity(pData, cx, cy, '#3b82f6'));
         notifyToast(`${pData.name} placed on map!`);
-        renderReadyList();
+        renderInitiativeList();
       }
-    } else {
-      cState.entities.push({
-        id: 'mon_' + Date.now(),
-        name: val,
-        team: 'enemy',
-        color: '#ef4444',
-        avatar: val.substring(0, 2).toUpperCase(),
-        x: cx,
-        y: cy,
-        hp: 20,
-        maxHp: 20,
-        ac: 14,
+    } else if (val.startsWith('champ_')) {
+      const cid = val.replace('champ_', '');
+      const cData = champions.find(c => c.id === cid);
+      const champName = cData ? cData.name : 'Champion NPC';
+      cState.entities.push(buildMonsterEntity(champName, cx, cy, teamChoice, {
+        ac: 16,
+        hp: 45,
+        maxHp: 45,
         speed: 6,
-        movementLeft: 6
-      });
-      notifyToast(`${val} spawned on map!`);
+        attackMod: 6,
+        dmgFormula: '1d8+3',
+        abilities: ['firebolt', 'thunderwave']
+      }));
+      notifyToast(`${champName} spawned on map!`);
+      renderInitiativeList();
+    } else {
+      cState.entities.push(buildMonsterEntity(val, cx, cy, teamChoice));
+      notifyToast(`${val} spawned on map (${teamChoice})!`);
+      renderInitiativeList();
     }
   });
 
@@ -1362,11 +1953,15 @@ function initCombatEngine(container) {
     initialRolls.slice().reverse().forEach(r => appendRollToCombatLog(r));
   }
   renderCombatPendingBanner();
+  renderTurnUi();
+  renderInitiativeList();
+  updatePhaseHeader();
 
   // Listen to worldState state changes for real-time rolls and requests
   worldState.subscribe(() => {
     renderCombatPendingBanner();
     updateActionUi();
+    renderTurnUi();
   });
 
   // Render Loop

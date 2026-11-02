@@ -5901,7 +5901,7 @@ function renderCombatView(container) {
             <div class="combat-panel-title" style="border: none; padding-bottom: 0.25rem;">
               <span>Initiative Order</span>
               <label id="combat-auto-npc-label" style="display: none; align-items: center; gap: 0.25rem; font-size: 0.65rem; color: var(--text-muted); cursor: pointer;" title="Automatically run enemy and allied NPC turns">
-                <input type="checkbox" id="combat-auto-npc-chk" checked> Auto NPC turns
+                <input type="checkbox" id="combat-auto-npc-chk"> Auto NPC turns
               </label>
             </div>
             <div id="combat-initiative-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; max-height: 220px;"></div>
@@ -6074,7 +6074,7 @@ function initCombatEngine(container) {
     effects: [],
     // Initiative / turn engine
     combat: { active: false, round: 0, order: [], turnIndex: 0, aiRunning: false },
-    autoNpc: true
+    autoNpc: false
   };
 
   // ==========================================
@@ -6457,7 +6457,7 @@ function initCombatEngine(container) {
 
   function canAct(actor, isBonus = false) {
     const c = cState.combat;
-    if (!c.active) return { ok: false, reason: 'Roll initiative to start combat first.' };
+    if (!c.active) return { ok: true }; // free-form actions outside of initiative (no action economy)
     if (c.aiRunning) return { ok: false, reason: 'Wait for the current NPC turn to finish.' };
     const cur = currentTurnEntity();
     if (!cur || cur.id !== actor.id) return { ok: false, reason: `It is not ${actor.name}'s turn${cur ? ` (current: ${cur.name})` : ''}.` };
@@ -7327,6 +7327,15 @@ function initCombatEngine(container) {
       // Find nearest hostile target
       targets.sort((a, b) => dist(npc, a) - dist(npc, b));
       let primaryTarget = targets[0];
+      const startPos = { x: npc.x, y: npc.y };
+      const logMovement = () => {
+        const moved = dist(startPos, npc);
+        if (moved > 0) {
+          logMsg(`${npc.name} moves ${moved * 5}ft toward ${primaryTarget.name}.`, 'var(--text-primary)');
+          startPos.x = npc.x;
+          startPos.y = npc.y;
+        }
+      };
 
       // 1. Check if NPC has an available AoE ability that catches multiple targets
       const usable = usableAbilities(npc);
@@ -7355,6 +7364,7 @@ function initCombatEngine(container) {
           npc.y = nextY;
           npc.movementLeft--;
         }
+        logMovement();
       }
 
       // 3. Action Step: Spell, ranged ability, or weapon melee
@@ -7374,8 +7384,9 @@ function initCombatEngine(container) {
           performWeaponAttack(npc, primaryTarget, 'NORMAL');
           npc.actionUsed = true;
         } else {
-          // If still out of reach, dash closer with remaining movement
-          while (targetDist > 1 && npc.movementLeft > 0) {
+          // Still out of reach: Dash action to close the distance
+          npc.movementLeft += npc.speed;
+          while (dist(npc, primaryTarget) > 1 && npc.movementLeft > 0) {
             const stepX = Math.sign(primaryTarget.x - npc.x);
             const stepY = Math.sign(primaryTarget.y - npc.y);
             const nextX = npc.x + stepX;
@@ -7385,13 +7396,15 @@ function initCombatEngine(container) {
             npc.y = nextY;
             npc.movementLeft--;
           }
-          logMsg(`${npc.name} closes distance toward ${primaryTarget.name}.`, 'var(--text-muted)');
+          logMsg(`${npc.name} takes the Dash action.`, 'var(--text-muted)');
+          logMovement();
           npc.actionUsed = true;
         }
         await new Promise(r => setTimeout(r, 800));
       }
     } finally {
       cState.combat.aiRunning = false;
+      if (cState.combat.active) logMsg(`${npc.name} ends their turn.`, 'var(--text-muted)');
       renderTurnUi();
       advanceTurn();
     }
@@ -7400,6 +7413,14 @@ function initCombatEngine(container) {
   // ==========================================
   // RENDER INITIATIVE & TURN CONTROLS
   // ==========================================
+  function handleDmResolveCurrent() {
+    const cur = cState.combat.order.length > 0 ? cState.entities.find(e => e.id === cState.combat.order[cState.combat.turnIndex]) : null;
+    if (!cur) return;
+    const isPlayer = cur.team === 'player';
+    logMsg(`⚙ DM resolves ${cur.name}'s turn${isPlayer ? ` on behalf of ${cur.playerName || 'the player'}` : ''}.`, '#fbbf24');
+    runNpcTurn(cur);
+  }
+
   function renderTurnUi() {
     const turnBox = container.querySelector('#combat-turn-box');
     if (!turnBox) return;
@@ -7452,36 +7473,50 @@ function initCombatEngine(container) {
           </div>
         </div>
 
-        <!-- Turn Controls -->
-        <div style="display: flex; gap: 0.35rem;">
+        <!-- Turn Controls: each unit resolves its own turn; DM can resolve on behalf of absent players -->
+        <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
           ${canControl ? `
             <button id="combat-end-turn-btn" class="btn btn-sm btn-primary" ${isAiBusy ? 'disabled' : ''} style="flex: 1; font-size: 0.75rem; padding: 4px;">
-              ${isAiBusy ? 'Running turn...' : 'Pass / End Turn ➔'}
+              ${isAiBusy ? 'Resolving turn...' : 'End Turn ➔'}
             </button>
           ` : `
             <div style="flex: 1; font-size: 0.7rem; color: var(--text-muted); font-style: italic; text-align: center; padding: 3px 0;">
-              Waiting for ${cur.playerName || cur.name} to act...
+              Waiting for ${cur.playerName || cur.name} to take their turn...
             </div>
           `}
-          ${isDm ? `
-            <button id="combat-force-next-btn" class="btn btn-sm" title="DM Force Advance" style="font-size: 0.7rem; padding: 4px 8px; color: #fca5a5;">
-              Next (DM)
-            </button>
-          ` : ''}
         </div>
+        ${isDm && !isAiBusy ? `
+          <div style="display: flex; gap: 0.35rem; margin-top: 0.3rem;">
+            <button id="combat-dm-resolve-btn" class="btn btn-sm" title="${isPlayer ? 'Player is away or unable: the DM auto-resolves this character\'s turn' : 'Run this NPC\'s turn automatically'}" style="flex: 1; font-size: 0.7rem; padding: 3px 6px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.5);">
+              ${isPlayer ? `⚙ Resolve for ${cur.playerName || 'player'} (DM)` : '⚙ Auto-resolve turn (DM)'}
+            </button>
+            <button id="combat-force-next-btn" class="btn btn-sm" title="Skip this unit's turn" style="font-size: 0.7rem; padding: 3px 8px; color: #fca5a5;">
+              Skip
+            </button>
+          </div>
+        ` : ''}
       </div>
     `;
 
     const endTurnBtn = turnBox.querySelector('#combat-end-turn-btn');
     if (endTurnBtn) {
       endTurnBtn.addEventListener('click', () => {
+        logMsg(`${cur.name} ends their turn.`, 'var(--text-muted)');
         advanceTurn();
+      });
+    }
+
+    const dmResolveBtn = turnBox.querySelector('#combat-dm-resolve-btn');
+    if (dmResolveBtn) {
+      dmResolveBtn.addEventListener('click', () => {
+        handleDmResolveCurrent();
       });
     }
 
     const forceNextBtn = turnBox.querySelector('#combat-force-next-btn');
     if (forceNextBtn) {
       forceNextBtn.addEventListener('click', () => {
+        logMsg(`⏭ DM skips ${cur.name}'s turn.`, 'var(--text-muted)');
         advanceTurn();
       });
     }
@@ -7948,9 +7983,22 @@ function initCombatEngine(container) {
       if (ping.life <= 0) cState.activePings.splice(i, 1);
     }
 
-    // Floater Damage Text
+    // Floater Damage Text & AoE Blast Flashes
     for (let i = cState.effects.length - 1; i >= 0; i--) {
       const eff = cState.effects[i];
+      if (eff.kind === 'aoe') {
+        const alpha = Math.max(0, eff.life / eff.maxLife);
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.55;
+        ctx.fillStyle = eff.color;
+        const minX = Math.max(0, eff.gx - eff.radius), maxX = Math.min(cState.gridSize - 1, eff.gx + eff.radius);
+        const minY = Math.max(0, eff.gy - eff.radius), maxY = Math.min(cState.gridSize - 1, eff.gy + eff.radius);
+        ctx.fillRect(minX * ts, minY * ts, (maxX - minX + 1) * ts, (maxY - minY + 1) * ts);
+        ctx.restore();
+        eff.life--;
+        if (eff.life <= 0) cState.effects.splice(i, 1);
+        continue;
+      }
       ctx.fillStyle = eff.color;
       ctx.font = 'bold 16px Inter';
       ctx.textAlign = 'center';
@@ -7963,6 +8011,29 @@ function initCombatEngine(container) {
     animationFrameId = requestAnimationFrame(render);
   }
   animationFrameId = requestAnimationFrame(render);
+
+  // Expose controller on container and window for testing, automated verification and external integrations
+  container._combatController = {
+    cState,
+    ABILITIES,
+    BESTIARY,
+    rollInitiative,
+    advanceTurn,
+    endCombat,
+    startTurn,
+    runNpcTurn,
+    handleDmResolveCurrent,
+    canAct,
+    isHostile,
+    executeAbility,
+    performWeaponAttack,
+    dist,
+    logMsg
+  };
+  if (typeof window !== 'undefined') {
+    window._lastCombatController = container._combatController;
+    window.renderCombatView = renderCombatView;
+  }
 }
 
   // COMPONENT: socialView.js
@@ -8968,6 +9039,10 @@ class DiceRollerModal {
 }
 const diceRoller = new DiceRollerModal();
 
+  if (typeof window !== 'undefined') {
+    window.renderCombatView = renderCombatView;
+    window.worldState = worldState;
+  }
   // ==========================================
   // MAIN APP INITIALIZER WITH DM & PLAYER PORTAL
   // ==========================================
@@ -9337,6 +9412,9 @@ const diceRoller = new DiceRollerModal();
 
     diceRoller.init();
     updatePlayerAuthUi();
+    if (typeof window !== 'undefined') {
+      window.worldState = worldState;
+    }
     switchTab(worldState.prefs.activeTab || 'map');
   }
 

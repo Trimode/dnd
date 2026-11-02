@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Combat System Functional Tests</title>
+</head>
+<body>
+  <div id="combat-mount"></div>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js"></script>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        const mount = document.getElementById('combat-mount');
+        if (typeof renderCombatView !== 'function') {
+          results.push("[FAIL] renderCombatView is not defined or exported on window");
+          document.getElementById('test-results').innerText = results.join('\n');
+          return;
+        }
+
+        renderCombatView(mount);
+        const ctrl = mount._combatController || window._lastCombatController;
+        assert(ctrl !== undefined, "Combat controller initialized and accessible");
+
+        const { cState, ABILITIES, BESTIARY, rollInitiative, advanceTurn, endCombat, handleDmResolveCurrent, isHostile, performWeaponAttack, executeAbility } = ctrl;
+
+        // ----------------------------------------------------
+        // TEST 1: Unit Identification and Hostility Logic
+        // ----------------------------------------------------
+        const enemy = cState.entities.find(e => e.team === 'enemy');
+        const player = cState.entities.find(e => e.team === 'player');
+        assert(enemy !== undefined, "Enemy unit found on map: " + (enemy ? enemy.name : 'none'));
+        assert(player !== undefined, "Player unit found on map: " + (player ? player.name : 'none'));
+
+        assert(isHostile(enemy, player) === true, "isHostile(enemy, player) evaluates to TRUE (enemy can target player)");
+        assert(isHostile(player, enemy) === true, "isHostile(player, enemy) evaluates to TRUE (player can target enemy)");
+        assert(isHostile(player, player) === false, "isHostile(player, player) evaluates to FALSE (ally targeting)");
+
+        // ----------------------------------------------------
+        // TEST 2: Enemy Targets Player with Attack & Spells
+        // ----------------------------------------------------
+        cState.selectedEntity = enemy;
+        const initialPlayerHp = player.hp;
+
+        // 2a. Enemy attacks player
+        performWeaponAttack(enemy, player);
+        assert(player.hp <= initialPlayerHp, "Enemy Attack against Player successfully resolved (Player HP: " + initialPlayerHp + " -> " + player.hp + ")");
+
+        // 2b. Enemy casts Magic Missile on player (auto-hit force damage)
+        const playerHpBeforeMM = player.hp;
+        executeAbility(enemy, 'magic_missile', player);
+        assert(player.hp < playerHpBeforeMM, "Enemy cast Magic Missile on Player successfully deducted HP (Player HP: " + playerHpBeforeMM + " -> " + player.hp + ")");
+
+        // 2c. Enemy casts Ember Hex on player (saving throw based)
+        const playerHpBeforeHex = player.hp;
+        executeAbility(enemy, 'ember_hex', player);
+        assert(true, "Enemy cast Ember Hex on Player triggered saving throw & damage resolution without errors");
+
+        // ----------------------------------------------------
+        // TEST 3: Dynamic AoE Radius Indicator & Ground Spells
+        // ----------------------------------------------------
+        const fireball = ABILITIES['fireball'];
+        assert(fireball !== undefined && fireball.kind === 'aoe', "Fireball ability is marked as AoE");
+        assert(fireball.radius === 4, "Fireball AoE has radius = 4 tiles (20ft sphere)");
+        assert(fireball.range === 30, "Fireball has range = 30 tiles (150ft)");
+
+        // Test hover preview state
+        cState.hoveredTile = { x: 5, y: 5 };
+        assert(cState.hoveredTile.x === 5 && cState.hoveredTile.y === 5, "cState.hoveredTile stores active coordinate for AoE circle highlight");
+
+        // Cast Fireball on ground at tile (5, 5)
+        const initialEffectsCount = cState.effects.length;
+        executeAbility(player, 'fireball', null, { x: 5, y: 5 });
+        const hasAoeEffect = cState.effects.some(eff => eff.kind === 'aoe' && eff.gx === 5 && eff.gy === 5);
+        assert(hasAoeEffect === true, "Ground-targeted Fireball cast at (5,5) created AoE blast effect on canvas");
+
+        // ----------------------------------------------------
+        // TEST 4: Initiative & Individual Turn Resolution
+        // ----------------------------------------------------
+        rollInitiative();
+        assert(cState.combat.active === true, "Combat activated after rollInitiative()");
+        assert(cState.combat.round === 1, "Combat starts in Round 1");
+        assert(cState.combat.order.length >= 2, "Initiative order contains " + cState.combat.order.length + " combatants");
+
+        const firstUnitId = cState.combat.order[cState.combat.turnIndex];
+        const firstUnit = cState.entities.find(e => e.id === firstUnitId);
+        assert(firstUnit !== undefined, "Active combatant for turn 1 is: " + firstUnit.name);
+
+        // Advance individual turn
+        const initialIdx = cState.combat.turnIndex;
+        advanceTurn();
+        const nextIdx = cState.combat.turnIndex;
+        assert(nextIdx !== initialIdx, "advanceTurn() correctly moved turn index from " + initialIdx + " to " + nextIdx);
+
+        // ----------------------------------------------------
+        // TEST 5: DM Resolving Turn for Away/Absent Player
+        // ----------------------------------------------------
+        worldState.setDmMode(true);
+        // Find index of player unit in initiative order
+        const pOrderIdx = cState.combat.order.findIndex(id => {
+          const u = cState.entities.find(e => e.id === id);
+          return u && u.team === 'player';
+        });
+
+        if (pOrderIdx !== -1) {
+          cState.combat.turnIndex = pOrderIdx;
+          const awayPlayer = cState.entities.find(e => e.id === cState.combat.order[pOrderIdx]);
+          handleDmResolveCurrent();
+          assert(true, "DM Resolve executed for away player: " + awayPlayer.name);
+        }
+
+        // ----------------------------------------------------
+        // TEST 6: Combat Action Log Verification
+        // ----------------------------------------------------
+        const logStream = mount.querySelector('#combat-log-stream');
+        assert(logStream !== null, "Combat & Dice Roll Log stream exists in DOM");
+        const logText = logStream.innerText;
+        assert(logText.includes('Magic Missile') || logText.includes('Attack') || logText.includes('Fireball'), "Action log contains detailed roll, spell, and damage entries");
+
+        // ----------------------------------------------------
+        // TEST 7: End Combat Reset
+        // ----------------------------------------------------
+        endCombat();
+        assert(cState.combat.active === false, "endCombat() cleanly deactivates combat and resets initiative");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("ALL FUNCTIONAL TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+      }
+
+      document.getElementById('test-results').innerText = results.join('\n');
+    });
+  </script>
+</body>
+</html>

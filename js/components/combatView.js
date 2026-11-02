@@ -622,17 +622,34 @@ function initCombatEngine(container) {
   canvasContainer.addEventListener('mouseup', stopPan);
   canvasContainer.addEventListener('mouseleave', stopPan);
 
-  // Hover Tracking
-  canvas.addEventListener('mousemove', (e) => {
+  // Coordinate translation handling any canvas scaling or viewport differences
+  function getCanvasTileCoords(e) {
     const rect = canvas.getBoundingClientRect();
-    const gx = Math.floor((e.clientX - rect.left) / cState.tileSize);
-    const gy = Math.floor((e.clientY - rect.top) / cState.tileSize);
-    if (gx >= 0 && gx < cState.gridSize && gy >= 0 && gy < cState.gridSize) {
-      cState.hoveredTile = { x: gx, y: gy };
+    const scaleX = canvas.width / (rect.width || 1);
+    const scaleY = canvas.height / (rect.height || 1);
+    const clientX = (e.clientX - rect.left) * scaleX;
+    const clientY = (e.clientY - rect.top) * scaleY;
+    const gx = Math.floor(clientX / cState.tileSize);
+    const gy = Math.floor(clientY / cState.tileSize);
+    return {
+      gx,
+      gy,
+      inBounds: gx >= 0 && gx < cState.gridSize && gy >= 0 && gy < cState.gridSize
+    };
+  }
+
+  // Hover Tracking
+  const updateHoverTile = (e) => {
+    const coords = getCanvasTileCoords(e);
+    if (coords.inBounds) {
+      cState.hoveredTile = { x: coords.gx, y: coords.gy };
     } else {
       cState.hoveredTile = null;
     }
-  });
+  };
+
+  canvas.addEventListener('mousemove', updateHoverTile);
+  canvasContainer.addEventListener('mousemove', updateHoverTile);
 
   canvas.addEventListener('mouseleave', () => {
     cState.hoveredTile = null;
@@ -641,20 +658,19 @@ function initCombatEngine(container) {
   // Right-Click Context Menu -> Instant Ping
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const gx = Math.floor((e.clientX - rect.left) / cState.tileSize);
-    const gy = Math.floor((e.clientY - rect.top) / cState.tileSize);
-    if (gx >= 0 && gx < cState.gridSize && gy >= 0 && gy < cState.gridSize) {
-      triggerPing(gx, gy);
+    const coords = getCanvasTileCoords(e);
+    if (coords.inBounds) {
+      triggerPing(coords.gx, coords.gy);
     }
   });
 
   // Canvas Click Handler
   canvas.addEventListener('click', (e) => {
     if (hasDragged) { hasDragged = false; return; }
-    const rect = canvas.getBoundingClientRect();
-    const gx = Math.floor((e.clientX - rect.left) / cState.tileSize);
-    const gy = Math.floor((e.clientY - rect.top) / cState.tileSize);
+    const coords = getCanvasTileCoords(e);
+    if (!coords.inBounds) return;
+    const gx = coords.gx;
+    const gy = coords.gy;
 
     if (e.shiftKey || e.altKey || cState.selectedAction === 'PING') {
       triggerPing(gx, gy);
@@ -700,6 +716,7 @@ function initCombatEngine(container) {
   }
 
   function canAct(actor, isBonus = false) {
+    if (worldState.prefs && worldState.prefs.dmMode) return { ok: true }; // DM has full authority to act/test
     const c = cState.combat;
     if (!c.active) return { ok: true }; // free-form actions outside of initiative (no action economy)
     if (c.aiRunning) return { ok: false, reason: 'Wait for the current NPC turn to finish.' };
@@ -712,6 +729,7 @@ function initCombatEngine(container) {
   }
 
   function hasSlotFor(actor, level) {
+    if (worldState.prefs && worldState.prefs.dmMode) return true;
     if (!level || !actor.spellSlots || Object.keys(actor.spellSlots).length === 0) return true;
     return Object.keys(actor.spellSlots).some(l => parseInt(l, 10) >= level && actor.spellSlots[l].current > 0);
   }
@@ -726,10 +744,16 @@ function initCombatEngine(container) {
   }
 
   function usableAbilities(actor) {
-    return (actor.abilities || []).filter(id => {
+    const isDm = Boolean(worldState.prefs && worldState.prefs.dmMode);
+    const keys = Object.keys(ABILITIES);
+    return keys.filter(id => {
       const ab = ABILITIES[id];
       if (!ab) return false;
-      if (ab.uses && ((actor.abilityUses || {})[id] || 0) >= ab.uses) return false;
+      if (isDm) return true;
+      if (actor.abilities && actor.abilities.includes(id)) {
+        if (ab.uses && ((actor.abilityUses || {})[id] || 0) >= ab.uses) return false;
+        return hasSlotFor(actor, ab.level);
+      }
       return hasSlotFor(actor, ab.level);
     });
   }
@@ -741,12 +765,12 @@ function initCombatEngine(container) {
     parts.push(ab.level === 0 ? 'Cantrip' : (ab.level ? `Lvl ${ab.level}` : (ab.weapon ? 'Weapon' : 'Ability')));
     if (ab.dmg) parts.push(`${ab.dmg} ${ab.type}`);
     if (ab.heal) parts.push(`heal ${ab.heal}`);
-    if (ab.save) parts.push(`${ab.save} save DC ${actor.spellDC || 13}`);
-    if (ab.kind === 'attack') parts.push(`+${ab.weapon ? actor.attackMod : actor.spellAttack} to hit`);
+    if (ab.save) parts.push(`${ab.save} save DC ${actor.spellDC || 15}`);
+    if (ab.radius) parts.push(`${ab.radius * 5}ft radius AoE`);
+    if (ab.kind === 'attack') parts.push(`+${ab.weapon ? actor.attackMod : (actor.spellAttack || 6)} to hit`);
     if (ab.kind === 'auto') parts.push('auto-hit');
     if (ab.centerSelf) parts.push(`${ab.radius * 5 + 5}ft around self`);
-    else if (ab.range) parts.push(ab.range <= 1 ? 'touch' : `${ab.range * 5}ft`);
-    if (ab.radius && !ab.centerSelf) parts.push(`${ab.radius * 5}ft radius`);
+    else if (ab.range) parts.push(ab.range <= 1 ? 'touch' : `${ab.range * 5}ft range`);
     if (ab.bonus) parts.push('bonus action');
     if (ab.uses) parts.push(`${Math.max(0, ab.uses - ((actor.abilityUses || {})[id] || 0))} use left`);
     return `${ab.name} [${parts.join(' • ')}]`;
@@ -986,9 +1010,12 @@ function initCombatEngine(container) {
       const id = cState.selectedSpellId;
       const ab = ABILITIES[id];
       if (!ab) return notifyToast('Choose a spell or ability first.');
-      const chk = canAct(actor, !!ab.bonus);
-      if (!chk.ok) return notifyToast(chk.reason);
-      if (!usableAbilities(actor).includes(id)) return notifyToast(`${ab.name} is unavailable (no slots / uses left).`);
+      const isDm = Boolean(worldState.prefs && worldState.prefs.dmMode);
+      if (!isDm) {
+        const chk = canAct(actor, !!ab.bonus);
+        if (!chk.ok) return notifyToast(chk.reason);
+        if (!usableAbilities(actor).includes(id)) return notifyToast(`${ab.name} is unavailable (no slots / uses left).`);
+      }
 
       const tile = { x: gx, y: gy };
       if (ab.kind === 'attack' || ab.kind === 'auto' || ab.kind === 'save') {
@@ -1021,19 +1048,39 @@ function initCombatEngine(container) {
   function populateAbilitySelect(actor) {
     const spellSelect = container.querySelector('#combat-spell-select');
     if (!spellSelect) return;
-    const ids = (actor.abilities || []).filter(id => ABILITIES[id]);
+    const isDm = Boolean(worldState.prefs && worldState.prefs.dmMode);
+    const unitIds = (actor.abilities || []).filter(id => ABILITIES[id]);
     const usable = usableAbilities(actor);
-    const sig = actor.id + '|' + ids.map(id => describeAbility(actor, id) + usable.includes(id)).join('|');
+
+    const aoeIds = ['fireball', 'thunderwave', 'frost_breath', 'fire_breath'];
+    const attackIds = ['magic_missile', 'scorching_ray', 'firebolt', 'sacred_flame', 'guiding_bolt', 'ember_hex', 'terrify_roar', 'shortbow', 'longbow', 'javelin', 'psychic_blade'];
+    const utilityIds = ['cure_wounds', 'healing_word', 'misty_step'];
+
+    const renderOpt = (id) => {
+      const ab = ABILITIES[id];
+      if (!ab) return '';
+      const available = isDm || usable.includes(id);
+      return `<option value="${id}" ${available ? '' : 'disabled'}>${describeAbility(actor, id)}${available ? '' : ' — unavailable'}</option>`;
+    };
+
+    let html = '';
+    if (unitIds.length > 0) {
+      html += `<optgroup label="Unit Prepared Spells & Abilities">` + unitIds.map(renderOpt).join('') + `</optgroup>`;
+    }
+    html += `<optgroup label="💥 Area of Effect (AoE) & Ground Spells">` + aoeIds.map(renderOpt).join('') + `</optgroup>`;
+    html += `<optgroup label="⚔️ Single-Target Spells & Attacks">` + attackIds.filter(id => !unitIds.includes(id)).map(renderOpt).join('') + `</optgroup>`;
+    html += `<optgroup label="✨ Healing, Utility & Teleport">` + utilityIds.filter(id => !unitIds.includes(id)).map(renderOpt).join('') + `</optgroup>`;
+
+    const sig = actor.id + '|' + isDm;
     if (spellSelect.dataset.sig !== sig) {
-      spellSelect.innerHTML = ids.length
-        ? ids.map(id => `<option value="${id}" ${usable.includes(id) ? '' : 'disabled'}>${describeAbility(actor, id)}${usable.includes(id) ? '' : ' — unavailable'}</option>`).join('')
-        : '<option value="">No spells or abilities</option>';
+      spellSelect.innerHTML = html;
       spellSelect.dataset.sig = sig;
     }
-    if (!ids.includes(cState.selectedSpellId) || !usable.includes(cState.selectedSpellId)) {
-      cState.selectedSpellId = usable[0] || null;
+
+    if (!cState.selectedSpellId || !ABILITIES[cState.selectedSpellId]) {
+      cState.selectedSpellId = unitIds[0] || 'fireball';
     }
-    if (cState.selectedSpellId) spellSelect.value = cState.selectedSpellId;
+    spellSelect.value = cState.selectedSpellId;
   }
 
   function updateActionUi() {
@@ -1092,7 +1139,14 @@ function initCombatEngine(container) {
       if (canControl && actor.hp > 0) {
         controls.style.display = 'flex';
         populateAbilitySelect(actor);
-        spellSelect.style.display = cState.selectedAction === 'CAST' ? 'block' : 'none';
+        spellSelect.style.display = 'block';
+        if (cState.selectedAction === 'CAST') {
+          spellSelect.style.border = '1px solid #fbbf24';
+          spellSelect.style.boxShadow = '0 0 10px rgba(251, 191, 36, 0.45)';
+        } else {
+          spellSelect.style.border = '1px solid var(--border-subtle)';
+          spellSelect.style.boxShadow = 'none';
+        }
       } else {
         controls.style.display = 'none';
         spellSelect.style.display = 'none';
@@ -1827,6 +1881,16 @@ function initCombatEngine(container) {
   if (spellSelectElem) {
     spellSelectElem.addEventListener('change', (e) => {
       cState.selectedSpellId = e.target.value;
+      cState.selectedAction = 'CAST';
+      updateActionUi();
+      const selAb = ABILITIES[cState.selectedSpellId];
+      if (selAb?.kind === 'aoe') {
+        notifyToast(`💥 Target square for ${selAb.name} (${selAb.radius * 5}ft radius, ${selAb.range * 5}ft range). Hover over the map to preview radius, click any square to cast!`);
+      } else if (selAb?.kind === 'teleport') {
+        notifyToast(`✨ Click any square within ${selAb.range * 5}ft to teleport!`);
+      } else {
+        notifyToast(`🎯 Select target creature for ${selAb ? selAb.name : 'spell'}...`);
+      }
     });
   }
 
@@ -1838,22 +1902,24 @@ function initCombatEngine(container) {
       container.querySelectorAll('.combat-act-btn').forEach(b => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
 
-      const spSelect = container.querySelector('#combat-spell-select');
       if (act === 'CAST') {
-        spSelect.style.display = 'block';
+        if (!cState.selectedSpellId) {
+          cState.selectedSpellId = 'fireball';
+        }
         if (cState.selectedEntity) {
           populateAbilitySelect(cState.selectedEntity);
         }
+        updateActionUi();
         const selAb = ABILITIES[cState.selectedSpellId];
         if (selAb?.kind === 'aoe') {
-          notifyToast(`Target square for ${selAb.name} (${selAb.radius * 5}ft radius, ${selAb.range * 5}ft range)`);
+          notifyToast(`💥 Target square for ${selAb.name} (${selAb.radius * 5}ft radius). Hover over the map to preview radius, click square to cast!`);
         } else if (selAb?.kind === 'teleport') {
-          notifyToast(`Select square to teleport (${selAb.range * 5}ft range)`);
+          notifyToast(`✨ Select square to teleport (${selAb.range * 5}ft range)`);
         } else {
-          notifyToast(`Select target for ${selAb ? selAb.name : 'spell'}...`);
+          notifyToast(`🎯 Select target creature for ${selAb ? selAb.name : 'spell'}...`);
         }
       } else {
-        spSelect.style.display = 'none';
+        updateActionUi();
         if (act === 'PING') notifyToast('Click any square on the map to ping!');
         else notifyToast(`Select target for ${act.toLowerCase()}...`);
       }
@@ -2069,69 +2135,134 @@ function initCombatEngine(container) {
       const actor = cState.selectedEntity;
       const ab = ABILITIES[cState.selectedSpellId];
       if (ab) {
+        const inCastingRange = (tx, ty) => Math.max(Math.abs(actor.x - tx), Math.abs(actor.y - ty)) <= (ab.range || 30);
+
         // 1. Highlight casting range on the grid
         if (ab.range && !ab.centerSelf) {
           ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.22)';
+          ctx.lineWidth = 1;
           for (let x = 0; x < cState.gridSize; x++) {
             for (let y = 0; y < cState.gridSize; y++) {
-              const d = Math.max(Math.abs(actor.x - x), Math.abs(actor.y - y));
-              if (d <= ab.range) {
+              if (inCastingRange(x, y)) {
                 ctx.fillRect(x * ts, y * ts, ts, ts);
+                ctx.strokeRect(x * ts + 0.5, y * ts + 0.5, ts - 1, ts - 1);
               }
             }
           }
         }
 
-        // 2. AoE Radius Preview (follows hovered tile, or centers around actor if self-centered)
+        // 2. AoE Radius Preview (follows hovered tile dynamically from point of origin, or centers around actor if self-centered)
         if (ab.kind === 'aoe') {
           const center = ab.centerSelf
             ? { x: actor.x, y: actor.y }
             : (cState.hoveredTile || null);
 
           if (center) {
-            const inRange = ab.centerSelf || Math.max(Math.abs(actor.x - center.x), Math.abs(actor.y - center.y)) <= (ab.range || 30);
-            const fillCol = inRange
-              ? (ab.type === 'cold' ? 'rgba(56, 189, 248, 0.28)' : (ab.type === 'thunder' ? 'rgba(167, 139, 250, 0.28)' : 'rgba(249, 115, 22, 0.28)'))
+            const inRange = ab.centerSelf || inCastingRange(center.x, center.y);
+            const isFire = ab.type === 'fire';
+            const isCold = ab.type === 'cold';
+
+            const tileFillCol = inRange
+              ? (isFire ? 'rgba(249, 115, 22, 0.38)' : (isCold ? 'rgba(56, 189, 248, 0.35)' : 'rgba(168, 85, 247, 0.35)'))
               : 'rgba(239, 68, 68, 0.22)';
-            const strokeCol = inRange
-              ? (ab.type === 'cold' ? '#38bdf8' : (ab.type === 'thunder' ? '#a78bfa' : '#f97316'))
+            const tileBorderCol = inRange
+              ? (isFire ? 'rgba(249, 115, 22, 0.8)' : (isCold ? 'rgba(56, 189, 248, 0.8)' : 'rgba(192, 132, 252, 0.8)'))
+              : 'rgba(239, 68, 68, 0.55)';
+            const perimeterCol = inRange
+              ? (isFire ? '#f97316' : (isCold ? '#38bdf8' : '#c084fc'))
               : '#ef4444';
 
-            // Highlight affected grid tiles
-            ctx.fillStyle = fillCol;
+            // Find all living creatures within the blast zone
+            const victimsInBlast = cState.entities.filter(e => e.hp > 0 && dist(e, center) <= ab.radius && !(ab.centerSelf && e.id === actor.id));
+
+            // Highlight every individual square inside the radius
             for (let x = 0; x < cState.gridSize; x++) {
               for (let y = 0; y < cState.gridSize; y++) {
                 if (Math.max(Math.abs(center.x - x), Math.abs(center.y - y)) <= ab.radius) {
                   if (!(ab.centerSelf && x === actor.x && y === actor.y)) {
+                    ctx.fillStyle = tileFillCol;
                     ctx.fillRect(x * ts, y * ts, ts, ts);
+                    ctx.strokeStyle = tileBorderCol;
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(x * ts + 1, y * ts + 1, ts - 2, ts - 2);
                   }
                 }
               }
             }
 
-            // Outline perimeter of AoE
+            // Outline perimeter of AoE with dash
             const minX = Math.max(0, center.x - ab.radius);
             const maxX = Math.min(cState.gridSize - 1, center.x + ab.radius);
             const minY = Math.max(0, center.y - ab.radius);
             const maxY = Math.min(cState.gridSize - 1, center.y + ab.radius);
-            ctx.strokeStyle = strokeCol;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([4, 4]);
+            ctx.save();
+            ctx.strokeStyle = perimeterCol;
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([6, 3]);
             ctx.strokeRect(minX * ts, minY * ts, (maxX - minX + 1) * ts, (maxY - minY + 1) * ts);
-            ctx.setLineDash([]);
+            ctx.restore();
 
-            // Reticle marker at center tile
-            ctx.strokeStyle = strokeCol;
-            ctx.lineWidth = 2;
+            // Highlight creatures inside the blast zone with warning rings
+            victimsInBlast.forEach(v => {
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(v.x * ts + ts / 2, v.y * ts + ts / 2, ts * 0.46, 0, Math.PI * 2);
+              ctx.strokeStyle = '#ef4444';
+              ctx.lineWidth = 3;
+              ctx.stroke();
+              ctx.restore();
+            });
+
+            // Point of origin crosshair reticle on the center square
+            ctx.save();
+            ctx.strokeStyle = inRange ? '#fbbf24' : '#ef4444';
+            ctx.lineWidth = 2.5;
             ctx.strokeRect(center.x * ts + 2, center.y * ts + 2, ts - 4, ts - 4);
+            // Crosshairs
+            ctx.beginPath();
+            ctx.moveTo(center.x * ts + ts / 2, center.y * ts);
+            ctx.lineTo(center.x * ts + ts / 2, (center.y + 1) * ts);
+            ctx.moveTo(center.x * ts, center.y * ts + ts / 2);
+            ctx.lineTo((center.x + 1) * ts, center.y * ts + ts / 2);
+            ctx.stroke();
+            // Center bullseye
+            ctx.beginPath();
+            ctx.arc(center.x * ts + ts / 2, center.y * ts + ts / 2, 4, 0, Math.PI * 2);
+            ctx.fillStyle = inRange ? '#fbbf24' : '#ef4444';
+            ctx.fill();
+            ctx.restore();
 
-            // Radius text indicator
-            ctx.fillStyle = strokeCol;
+            // Floating tactical pill badge above the blast
+            ctx.save();
+            const radiusFt = ab.radius * 5;
+            const badgeText = inRange
+              ? `💥 ${ab.name} [${radiusFt}ft Radius • ${victimsInBlast.length} in blast] — Click square to cast`
+              : `⛔ ${ab.name} [${radiusFt}ft Radius] — OUT OF RANGE (Max ${ab.range * 5}ft)`;
             ctx.font = 'bold 11px Inter, sans-serif';
             ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            const radiusFt = ab.radius * 5;
-            ctx.fillText(`${ab.name} (${radiusFt}ft AoE${inRange ? '' : ' - OUT OF RANGE'})`, center.x * ts + ts / 2, minY * ts - 4);
+            ctx.textBaseline = 'middle';
+            const textMetrics = ctx.measureText(badgeText);
+            const badgeW = textMetrics.width + 18;
+            const badgeH = 22;
+            const badgeX = Math.max(badgeW / 2 + 4, Math.min(canvas.width - badgeW / 2 - 4, center.x * ts + ts / 2));
+            const badgeY = Math.max(badgeH / 2 + 4, minY * ts - 14);
+
+            ctx.fillStyle = inRange ? 'rgba(15, 23, 42, 0.94)' : 'rgba(127, 29, 29, 0.96)';
+            ctx.strokeStyle = inRange ? '#f97316' : '#ef4444';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+              ctx.roundRect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH, 4);
+            } else {
+              ctx.rect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = inRange ? '#fff' : '#fca5a5';
+            ctx.fillText(badgeText, badgeX, badgeY);
+            ctx.restore();
           }
         } else if (ab.kind === 'teleport' && cState.hoveredTile) {
           // Teleport destination tile preview
@@ -2271,6 +2402,9 @@ function initCombatEngine(container) {
     isHostile,
     executeAbility,
     performWeaponAttack,
+    updateActionUi,
+    handleUnitClick,
+    handleActionClick,
     dist,
     logMsg
   };

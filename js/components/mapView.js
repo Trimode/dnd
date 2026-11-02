@@ -158,6 +158,12 @@ function initMapInteractivity(container) {
       const isBastion = region.pointsOfInterest.some(p => p.type.includes('Bastion'));
       const emblemSymbol = isBastion ? 'B' : region.type === 'Bleedland' ? '*' : 'R';
 
+      // Generous initial estimate based on Cinzel uppercase character metrics so text NEVER overflows container box
+      const charWidth = 7.4;
+      const padX = 14;
+      const initialWidth = Math.max(90, Math.ceil(region.name.length * charWidth + padX * 2));
+      const initialX = -Math.round(initialWidth / 2);
+
       pinG.innerHTML = `
         <circle cx="0" cy="0" r="18" fill="${region.color}" fill-opacity="0.3" class="map-pin-pulse" />
         
@@ -168,8 +174,8 @@ function initMapInteractivity(container) {
         </g>
 
         <g transform="translate(0, 22)" class="pin-label-group" filter="url(#pin-glow)">
-          <rect x="-60" y="-9" width="120" height="18" rx="4" fill="#1e140c" fill-opacity="0.92" stroke="#d4af37" stroke-width="1" />
-          <text x="0" y="3" font-family="Cinzel, serif" font-size="9.5" font-weight="700" 
+          <rect x="${initialX}" y="-9" width="${initialWidth}" height="18" rx="4" fill="#1e140c" fill-opacity="0.94" stroke="#d4af37" stroke-width="1" />
+          <text x="0" y="3.5" font-family="Cinzel, serif" font-size="9" font-weight="700" 
                 fill="#f5eedb" text-anchor="middle" class="pin-label">${region.name}</text>
         </g>
       `;
@@ -181,6 +187,32 @@ function initMapInteractivity(container) {
 
       pinsLayer.appendChild(pinG);
     });
+
+    // Precise dynamic autosizing for all pin label containers based on rendered text dimensions
+    function autoSizePinLabels() {
+      pinsLayer.querySelectorAll('.map-pin').forEach(pin => {
+        try {
+          const textEl = pin.querySelector('.pin-label');
+          const rectEl = pin.querySelector('.pin-label-group rect');
+          if (textEl && rectEl) {
+            const computedLen = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0;
+            if (computedLen > 10) {
+              const exactWidth = Math.ceil(computedLen + 20); // 10px clean padding on each side
+              rectEl.setAttribute('width', exactWidth);
+              rectEl.setAttribute('x', -Math.round(exactWidth / 2));
+            }
+          }
+        } catch (e) {}
+      });
+    }
+
+    autoSizePinLabels();
+    requestAnimationFrame(autoSizePinLabels);
+    setTimeout(autoSizePinLabels, 100);
+    setTimeout(autoSizePinLabels, 300);
+    if (document.fonts) {
+      document.fonts.ready.then(autoSizePinLabels);
+    }
   }
 
   function openFlyout(region) {

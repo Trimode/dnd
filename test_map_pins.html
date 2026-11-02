@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Map Pin Label Fit Tests</title>
+</head>
+<body>
+  <div id="view-map" style="display: block; width: 1000px; height: 800px;"></div>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js"></script>
+
+  <script>
+    (function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        const mapContainer = document.getElementById('view-map');
+        assert(typeof renderMapView === 'function', "renderMapView is exposed on window");
+
+        renderMapView(mapContainer);
+
+        const pins = document.querySelectorAll('.map-pin');
+        assert(pins.length > 0, "Map pins rendered in SVG: " + pins.length + " pins found");
+
+        let allFit = true;
+        let testedForegrove = false;
+
+        pins.forEach(pin => {
+          const regionId = pin.getAttribute('data-region-id');
+          const textEl = pin.querySelector('.pin-label');
+          const rectEl = pin.querySelector('.pin-label-group rect');
+
+          if (!textEl || !rectEl) {
+            results.push("[FAIL] Pin missing text or rect element (" + regionId + ")");
+            allFit = false;
+            return;
+          }
+
+          const text = textEl.textContent.trim();
+          const textWidth = textEl.getComputedTextLength ? textEl.getComputedTextLength() : 0;
+          const rectWidth = parseFloat(rectEl.getAttribute('width'));
+          const rectX = parseFloat(rectEl.getAttribute('x'));
+
+          const rectRight = rectX + rectWidth;
+          const textHalf = (textWidth || (text.length * 7.2)) / 2;
+
+          const enclosesLeft = rectX <= -textHalf;
+          const enclosesRight = rectRight >= textHalf;
+
+          if (text.includes("Foregrove")) {
+            testedForegrove = true;
+            assert(rectWidth >= (textWidth || (text.length * 7.2)), "Foregrove Canopy container width (" + rectWidth + "px) is >= text width (" + Math.round(textWidth) + "px)");
+            assert(enclosesLeft && enclosesRight, "Foregrove Canopy text is fully inside rect bounds (rect: [" + rectX + " to " + rectRight + "], textHalf: " + Math.round(textHalf) + ")");
+          }
+
+          if (!enclosesLeft || !enclosesRight) {
+            results.push("[FAIL] Overspill on '" + text + "': textWidth=" + Math.round(textWidth) + "px, rectWidth=" + rectWidth + "px, rectX=" + rectX);
+            allFit = false;
+          } else {
+            results.push("[PASS] Fitted: '" + text + "' (container width: " + rectWidth + "px, x: " + rectX + ")");
+          }
+        });
+
+        assert(testedForegrove, "Verified Foregrove Canopy pin specifically");
+        assert(allFit, "All map pin label containers successfully enclose their region names without overspill");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("MAP PIN LABEL TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

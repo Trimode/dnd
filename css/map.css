@@ -98,6 +98,16 @@
   pointer-events: none;
 }
 
+.map-pin .pin-label-group rect {
+  transition: stroke 0.2s ease, fill-opacity 0.2s ease;
+}
+
+.map-pin:hover .pin-label-group rect {
+  stroke: #ffd700;
+  stroke-width: 1.5;
+  fill-opacity: 0.98;
+}
+
 .map-pin:hover .pin-label {
   fill: #ffffff !important;
   font-weight: 800;

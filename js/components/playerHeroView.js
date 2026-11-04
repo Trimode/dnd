@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Player Hero Console & Daily Campaign Journal Component for D&D 5.5e
  * Features Account Ownership Access Control, DM Active Session Monitor,
  * Interactive Character Sheet, Current World Location Radar, and Daily Notes by Days with Titles
@@ -134,8 +134,13 @@ export function renderHeroView(container) {
     });
 
     container.querySelector('#btn-jump-create-char')?.addEventListener('click', () => {
-      const partyTab = document.querySelector('.nav-tab-btn[data-tab="party"]');
-      if (partyTab) partyTab.click();
+      const createTab = document.querySelector('.nav-tab-btn[data-tab="create-hero"]');
+      if (createTab) {
+        createTab.click();
+      } else {
+        const partyTab = document.querySelector('.nav-tab-btn[data-tab="party"]');
+        if (partyTab) partyTab.click();
+      }
     });
     return;
   }

@@ -8,7 +8,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '0.7';
+    this.version = '0.8';
     this.games = [
       {
         id: 'demo',
@@ -407,6 +407,104 @@ class WorldStateManager {
       return this.data.partyCharacters[index];
     }
     return null;
+  }
+
+  createPartyCharacter(charData, userId = null) {
+    if (!this.data.partyCharacters) this.data.partyCharacters = [];
+
+    const initials = (charData.name || 'Hero')
+      .split(' ')
+      .filter(w => w.length > 0)
+      .map(w => w[0].toUpperCase())
+      .slice(0, 2)
+      .join('') || 'PC';
+
+    const charId = 'pc-' + Date.now();
+    const activeUser = userId 
+      ? (this.data.users || []).find(u => u.id === userId)
+      : this.getActiveUser();
+
+    const stats = {
+      str: parseInt(charData.stats?.str, 10) || 10,
+      dex: parseInt(charData.stats?.dex, 10) || 10,
+      con: parseInt(charData.stats?.con, 10) || 10,
+      int: parseInt(charData.stats?.int, 10) || 10,
+      wis: parseInt(charData.stats?.wis, 10) || 10,
+      cha: parseInt(charData.stats?.cha, 10) || 10
+    };
+
+    const getMod = (val) => Math.floor((val - 10) / 2);
+    const conMod = getMod(stats.con);
+    const dexMod = getMod(stats.dex);
+    const wisMod = getMod(stats.wis);
+
+    const level = parseInt(charData.level, 10) || 1;
+    const hitDie = parseInt(charData.hitDie, 10) || 10;
+    const baseHp = hitDie + conMod + (level > 1 ? (level - 1) * (Math.floor(hitDie / 2) + 1 + conMod) : 0);
+    const calculatedHp = Math.max(1, charData.hpMax || baseHp);
+
+    let defaultAc = 10 + dexMod;
+    if (charData.classRole && charData.classRole.includes('Barbarian')) {
+      defaultAc = 10 + dexMod + conMod;
+    } else if (charData.classRole && charData.classRole.includes('Monk')) {
+      defaultAc = 10 + dexMod + wisMod;
+    } else if (charData.classRole && (charData.classRole.includes('Fighter') || charData.classRole.includes('Paladin'))) {
+      defaultAc = 16;
+    } else {
+      defaultAc = 11 + dexMod;
+    }
+
+    const calculatedAc = charData.ac || defaultAc;
+    const initMod = dexMod >= 0 ? `+${dexMod}` : `${dexMod}`;
+
+    const newChar = {
+      id: charId,
+      name: (charData.name || 'Unnamed Champion').trim(),
+      playerName: activeUser ? activeUser.displayName : (charData.playerName || 'Adventurer'),
+      userId: activeUser ? activeUser.id : null,
+      ownerUserId: activeUser ? activeUser.id : null,
+      claimedUserId: activeUser ? activeUser.id : null,
+      level: level,
+      species: charData.species || 'Human',
+      classRole: charData.classRole || 'Fighter',
+      alignment: charData.alignment || 'Neutral Good',
+      background: charData.background || 'Wayfarer',
+      originFeat: charData.originFeat || 'Lucky',
+      avatar: initials,
+      hpCurrent: calculatedHp,
+      hpMax: calculatedHp,
+      tempHp: 0,
+      ac: calculatedAc,
+      speed: charData.speed || '30 ft',
+      initiativeMod: initMod,
+      passivePerception: 10 + wisMod,
+      passiveInsight: 10 + wisMod,
+      stats: stats,
+      statMethod: charData.statMethod || 'custom',
+      weaponMasteries: charData.weaponMasteries || ['Topple (Warhammer)', 'Cleave (Greataxe)'],
+      equipment: charData.equipment || ["Explorer's Pack", "Dungeoneer's Pack", "Rations (5 days)"],
+      features: charData.features || [],
+      entryPoint: charData.entryPoint || {
+        regionId: 'region-foregrove',
+        regionName: 'The Foregrove Canopy',
+        locationName: 'Verdant Border Gate',
+        entryBackstory: charData.backstory || 'Journeyed into the Bleeding Realms in search of ancient primordial knowledge.',
+        dmHook: charData.dmHook || 'Carries a strange etched token discovered during the journey.'
+      }
+    };
+
+    this.data.partyCharacters.push(newChar);
+
+    if (activeUser) {
+      activeUser.claimedCharId = charId;
+    }
+
+    this.prefs.activeHeroId = charId;
+    this.saveData();
+    this.savePrefs();
+    this.notify();
+
+    return newChar;
   }
 
   deletePartyCharacter(charId) {

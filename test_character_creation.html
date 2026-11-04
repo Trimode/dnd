@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Character Creation & Custom Stats Tests (5.5e)</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+  <div id="view-create-hero" style="display: none;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=0.8"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        // 1. Verify global exports & state methods
+        assert(typeof renderCharacterCreateView === 'function', "renderCharacterCreateView is exposed on window");
+        assert(typeof worldState.createPartyCharacter === 'function', "worldState.createPartyCharacter method exists");
+
+        // 2. Test Custom Stats Input & Saving
+        const initialCount = (worldState.data.partyCharacters || []).length;
+        const customPayload = {
+          name: "Valerius Dark-Bane",
+          level: 3,
+          species: "Goliath",
+          classRole: "Paladin",
+          hitDie: 10,
+          alignment: "Lawful Good",
+          background: "Soldier",
+          originFeat: "Savage Attacker",
+          stats: { str: 18, dex: 12, con: 16, int: 10, wis: 14, cha: 16 },
+          statMethod: "custom",
+          weaponMasteries: ["Push (Halberd)", "Sap (Flail)"],
+          backstory: "A stalwart paladin forged in the slagfields."
+        };
+
+        const createdCustom = worldState.createPartyCharacter(customPayload);
+        assert(createdCustom !== null, "Custom character successfully created");
+        assert(createdCustom.name === "Valerius Dark-Bane", "Character name matches: " + createdCustom.name);
+        assert(createdCustom.stats.str === 18 && createdCustom.stats.con === 16, "Custom stats saved exactly (STR 18, CON 16)");
+        assert(createdCustom.initiativeMod === "+1", "Initiative calculated correctly (+1 from DEX 12)");
+        assert(createdCustom.hpMax >= 28, "Max HP calculated correctly with Paladin d10 + CON mod (HP: " + createdCustom.hpMax + ")");
+        assert(createdCustom.avatar === "VD", "Avatar initials generated properly: " + createdCustom.avatar);
+
+        // 3. Verify character is in partyCharacters & activeHero
+        const updatedCount = (worldState.data.partyCharacters || []).length;
+        assert(updatedCount === initialCount + 1, "Character added to worldState.data.partyCharacters (count: " + updatedCount + ")");
+        const activeHero = worldState.getActiveHero();
+        assert(activeHero && activeHero.id === createdCustom.id, "Newly created character automatically set as activeHero");
+
+        // 4. Test Account Binding
+        // Register a test user and forge character to that account
+        const testUserRes = worldState.registerUser("hero_player_1", "pass123", "Sir Galahad", "GH");
+        assert(testUserRes.success === true || worldState.getActiveUser() !== null, "User account available for testing");
+        const activeUser = worldState.getActiveUser();
+        assert(activeUser !== null, "Active user is logged in: " + (activeUser ? activeUser.displayName : ''));
+
+        const accountCharPayload = {
+          name: "Lyra Shadow-Dancer",
+          level: 2,
+          species: "Elf",
+          classRole: "Rogue",
+          hitDie: 8,
+          alignment: "Chaotic Neutral",
+          background: "Criminal",
+          originFeat: "Alert",
+          stats: { str: 10, dex: 17, con: 14, int: 13, wis: 12, cha: 8 },
+          statMethod: "point-buy",
+          weaponMasteries: ["Vex (Rapier)", "Nick (Dagger)"],
+          backstory: "Infiltrator of the Glass Dunes."
+        };
+
+        const createdAccountHero = worldState.createPartyCharacter(accountCharPayload, activeUser.id);
+        assert(createdAccountHero !== null, "Account hero successfully created");
+        assert(activeUser.claimedCharId === createdAccountHero.id, "Character bound to user account (claimedCharId matches hero ID)");
+        assert(createdAccountHero.playerName === activeUser.displayName, "Character playerName set to account display name: " + createdAccountHero.playerName);
+        assert(worldState.canControlCharacter(createdAccountHero.id) === true, "Account owner has full control permissions over the created hero");
+
+        // 5. Test DOM Rendering
+        const testContainer = document.getElementById('view-create-hero');
+        renderCharacterCreateView(testContainer);
+
+        const nameInput = testContainer.querySelector('#create-char-name');
+        assert(nameInput !== null, "#create-char-name input field rendered");
+
+        const speciesSelect = testContainer.querySelector('#create-char-species');
+        assert(speciesSelect !== null && speciesSelect.children.length >= 8, "5.5e Species dropdown rendered with " + (speciesSelect ? speciesSelect.children.length : 0) + " lineages");
+
+        const classSelect = testContainer.querySelector('#create-char-class');
+        assert(classSelect !== null && classSelect.children.length >= 10, "5.5e Class dropdown rendered with " + (classSelect ? classSelect.children.length : 0) + " classes");
+
+        const methodButtons = testContainer.querySelectorAll('button[data-method]');
+        assert(methodButtons.length === 4, "All 4 stat generation methods available (Standard Array, Point Buy, 4d6 Drop Lowest, Custom Stats)");
+
+        const saveBtn = testContainer.querySelector('#btn-save-character');
+        assert(saveBtn !== null, "#btn-save-character button rendered");
+
+        // 6. Test Navigation in index.html
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        const navBtn = doc.querySelector('.nav-tab-btn[data-tab="create-hero"]');
+        assert(navBtn !== null, "✦ Create Hero navigation tab exists in index.html");
+
+        const viewSection = doc.getElementById('view-create-hero');
+        assert(viewSection !== null, "#view-create-hero section container exists in main-content");
+
+        // 7. Verify version is 0.8
+        const versionEl = doc.getElementById('app-version-indicator');
+        assert(versionEl && versionEl.textContent.trim() === 'v0.8', "Version indicator updated to 'v0.8'");
+        assert(window.APP_VERSION === '0.8', "window.APP_VERSION is '0.8'");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("CHARACTER CREATION TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

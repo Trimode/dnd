@@ -676,7 +676,16 @@ export function renderPartyView(container) {
     wizardModal.classList.remove('active');
   }
 
-  if (openWizBtn) openWizBtn.addEventListener('click', openWizard);
+  if (openWizBtn) {
+    openWizBtn.addEventListener('click', () => {
+      const createTab = document.querySelector('.nav-tab-btn[data-tab="create-hero"]');
+      if (createTab) {
+        createTab.click();
+      } else {
+        openWizard();
+      }
+    });
+  }
   if (closeWizBtn) closeWizBtn.addEventListener('click', closeWizard);
   if (cancelWizBtn) cancelWizBtn.addEventListener('click', closeWizard);
 

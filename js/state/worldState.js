@@ -8,7 +8,49 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '0.6';
+    this.version = '0.7';
+    this.games = [
+      {
+        id: 'demo',
+        name: 'The Bleeding Realms (Demo)',
+        shortName: 'Demo',
+        subtitle: 'Where Primal Elements Clash and Bleed into Diverse Lands & Peoples',
+        status: 'active',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 11,
+        partyCount: 3,
+        tag: 'Active Demo',
+        description: 'The active 5.5e campaign compendium: interactive atlas, dynamic region pins, and tactical combat battlemat.'
+      },
+      {
+        id: 'slagfields',
+        name: 'Shadows of the Slagfields',
+        shortName: 'Slagfields',
+        subtitle: 'Subterranean Dwarven Strongholds & Smoldering Forges',
+        status: 'slot',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 4,
+        partyCount: 0,
+        tag: 'Campaign Slot 2',
+        description: 'Magma rivers, deep iron forges, and ancient fire elementals. (Password: bubbles)'
+      },
+      {
+        id: 'permafrost',
+        name: 'Glacial Crags Expedition',
+        shortName: 'Permafrost',
+        subtitle: 'High-Altitude Survival & Permafrost Ridge',
+        status: 'slot',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 5,
+        partyCount: 0,
+        tag: 'Campaign Slot 3',
+        description: 'Frozen spires, rime wolves, and frost giant ruins. (Password: bubbles)'
+      }
+    ];
+    this.activeGameId = 'demo';
     this.data = this.loadData();
     this.ensureDefaults();
     this.prefs = this.loadPrefs();
@@ -190,6 +232,28 @@ class WorldStateManager {
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
+  }
+
+  getActiveGame() {
+    return this.games.find(g => g.id === this.activeGameId) || this.games[0];
+  }
+
+  setActiveGame(gameId) {
+    const game = this.games.find(g => g.id === gameId);
+    if (game) {
+      this.activeGameId = gameId;
+      this.prefs.activeGameId = gameId;
+      this.savePrefs();
+      this.notify();
+    }
+  }
+
+  verifyGamePassword(gameId, password) {
+    if (!password) return false;
+    const clean = password.trim().toLowerCase();
+    if (clean === 'bubbles') return true;
+    const game = this.games.find(g => g.id === gameId);
+    return game && game.password && game.password.toLowerCase() === clean;
   }
 
   notify() {

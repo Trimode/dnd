@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Game Portal & Tile System Tests</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=0.7"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        // 1. Verify worldState games configuration
+        assert(typeof worldState !== 'undefined', "worldState is defined and accessible");
+        assert(Array.isArray(worldState.games) && worldState.games.length >= 2, "worldState.games list contains " + (worldState.games ? worldState.games.length : 0) + " campaigns");
+
+        const demoGame = worldState.games.find(g => g.id === 'demo');
+        assert(demoGame !== undefined, "Active 'demo' campaign exists in worldState.games");
+        assert(demoGame && demoGame.name.includes("Demo"), "Demo game name is: " + (demoGame ? demoGame.name : ''));
+        assert(demoGame && demoGame.password === 'bubbles', "Demo campaign password is 'bubbles'");
+
+        // 2. Test verifyGamePassword logic
+        assert(worldState.verifyGamePassword('demo', 'bubbles') === true, "verifyGamePassword('demo', 'bubbles') returns TRUE");
+        assert(worldState.verifyGamePassword('demo', 'Bubbles') === true, "verifyGamePassword('demo', 'Bubbles') (case-insensitive) returns TRUE");
+        assert(worldState.verifyGamePassword('demo', 'wrong') === false, "verifyGamePassword('demo', 'wrong') returns FALSE");
+        assert(worldState.verifyGamePassword('demo', '') === false, "verifyGamePassword('demo', '') returns FALSE");
+
+        // 3. Test active game retrieval
+        const activeGame = worldState.getActiveGame();
+        assert(activeGame !== null && activeGame.id === 'demo', "worldState.getActiveGame() returns demo campaign");
+
+        // 4. Test DOM structure from index.html
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        const portalModal = doc.getElementById('game-select-modal');
+        assert(portalModal !== null, "#game-select-modal portal modal exists in index.html");
+        assert(portalModal && portalModal.classList.contains('active'), "Game portal modal is active on initial site load");
+
+        const tilesGrid = doc.getElementById('game-tiles-grid');
+        assert(tilesGrid !== null, "#game-tiles-grid container exists for the tile system");
+
+        const passwordInput = doc.getElementById('game-password-input');
+        assert(passwordInput !== null, "#game-password-input password field exists");
+
+        const switcherBtn = doc.getElementById('game-switcher-btn');
+        assert(switcherBtn !== null, "#game-switcher-btn campaign switcher exists in header controls");
+
+        const activeGameName = doc.getElementById('header-active-game-name');
+        assert(activeGameName && activeGameName.textContent.trim() === 'Demo', "Header shows active game 'Demo'");
+
+        // 5. Test version update
+        const versionEl = doc.getElementById('app-version-indicator');
+        assert(versionEl && versionEl.textContent.trim() === 'v0.7', "Top-left version indicator updated to 'v0.7'");
+        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '0.7', "window.APP_VERSION is '0.7'");
+        assert(worldState.version === '0.7', "worldState.version is '0.7'");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("GAME PORTAL & TILE SYSTEM TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

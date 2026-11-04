@@ -1404,7 +1404,49 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '0.6';
+    this.version = '0.7';
+    this.games = [
+      {
+        id: 'demo',
+        name: 'The Bleeding Realms (Demo)',
+        shortName: 'Demo',
+        subtitle: 'Where Primal Elements Clash and Bleed into Diverse Lands & Peoples',
+        status: 'active',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 11,
+        partyCount: 3,
+        tag: 'Active Demo',
+        description: 'The active 5.5e campaign compendium: interactive atlas, dynamic region pins, and tactical combat battlemat.'
+      },
+      {
+        id: 'slagfields',
+        name: 'Shadows of the Slagfields',
+        shortName: 'Slagfields',
+        subtitle: 'Subterranean Dwarven Strongholds & Smoldering Forges',
+        status: 'slot',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 4,
+        partyCount: 0,
+        tag: 'Campaign Slot 2',
+        description: 'Magma rivers, deep iron forges, and ancient fire elementals. (Password: bubbles)'
+      },
+      {
+        id: 'permafrost',
+        name: 'Glacial Crags Expedition',
+        shortName: 'Permafrost',
+        subtitle: 'High-Altitude Survival & Permafrost Ridge',
+        status: 'slot',
+        password: 'bubbles',
+        system: 'D&D 5.5e',
+        regionsCount: 5,
+        partyCount: 0,
+        tag: 'Campaign Slot 3',
+        description: 'Frozen spires, rime wolves, and frost giant ruins. (Password: bubbles)'
+      }
+    ];
+    this.activeGameId = 'demo';
     this.data = this.loadData();
     this.ensureDefaults();
     this.prefs = this.loadPrefs();
@@ -1586,6 +1628,28 @@ class WorldStateManager {
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
     };
+  }
+
+  getActiveGame() {
+    return this.games.find(g => g.id === this.activeGameId) || this.games[0];
+  }
+
+  setActiveGame(gameId) {
+    const game = this.games.find(g => g.id === gameId);
+    if (game) {
+      this.activeGameId = gameId;
+      this.prefs.activeGameId = gameId;
+      this.savePrefs();
+      this.notify();
+    }
+  }
+
+  verifyGamePassword(gameId, password) {
+    if (!password) return false;
+    const clean = password.trim().toLowerCase();
+    if (clean === 'bubbles') return true;
+    const game = this.games.find(g => g.id === gameId);
+    return game && game.password && game.password.toLowerCase() === clean;
   }
 
   notify() {
@@ -9207,7 +9271,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '0.6';
+    window.APP_VERSION = '0.7';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.worldState = worldState;
@@ -9570,13 +9634,176 @@ const diceRoller = new DiceRollerModal();
         if (searchModal) searchModal.classList.remove('active');
         if (dmAuthModal) closeDmModal();
         if (playerAuthModal) closePlayerModal();
+        if (isGameUnlocked && gameSelectModal) closeGameSelectModal();
         diceRoller.close();
       }
     });
 
+    // ==========================================
+    // CAMPAIGN SELECTION TILE SYSTEM & PASSWORD PORTAL
+    // ==========================================
+    const gameSelectModal = document.getElementById('game-select-modal');
+    const closeGameSelectBtn = document.getElementById('close-game-select-modal');
+    const gameSwitcherBtn = document.getElementById('game-switcher-btn');
+    const headerActiveGameName = document.getElementById('header-active-game-name');
+    const gameTilesView = document.getElementById('game-tiles-view');
+    const gameTilesGrid = document.getElementById('game-tiles-grid');
+    const gamePasswordView = document.getElementById('game-password-view');
+    const targetGameTitle = document.getElementById('target-game-title');
+    const targetGameSubtitle = document.getElementById('target-game-subtitle');
+    const gamePasswordForm = document.getElementById('game-password-form');
+    const gamePasswordInput = document.getElementById('game-password-input');
+    const gamePasswordError = document.getElementById('game-password-error');
+    const toggleGamePwBtn = document.getElementById('toggle-game-pw-btn');
+    const backToTilesBtn = document.getElementById('back-to-tiles-btn');
+    const cancelPasswordBtn = document.getElementById('cancel-password-btn');
+
+    let pendingGameId = 'demo';
+    let isGameUnlocked = false;
+
+    function renderGameTiles() {
+      if (!gameTilesGrid) return;
+      const games = worldState.games || [];
+      const activeGame = worldState.getActiveGame();
+
+      gameTilesGrid.innerHTML = games.map(g => {
+        const isActive = g.id === activeGame.id;
+        return `
+          <div class="game-tile-card ${isActive ? 'is-active' : ''}" data-game-id="${g.id}">
+            <div class="game-tile-badge ${g.status}">${g.tag || (isActive ? 'Active Demo' : 'Slot')}</div>
+            <div class="game-tile-header">
+              <span class="game-tile-icon">✦</span>
+              <h4 class="game-tile-title">${g.name}</h4>
+            </div>
+            <p class="game-tile-desc">${g.description}</p>
+            <div class="game-tile-meta">
+              <span>📜 ${g.system}</span>
+              <span>🗺️ ${g.regionsCount} Regions</span>
+              <span>⚔️ ${g.partyCount ? g.partyCount + ' Heroes' : 'Open Slot'}</span>
+            </div>
+            <button type="button" class="btn btn-sm btn-tile-select ${isActive ? 'btn-primary' : ''}" data-game-id="${g.id}">
+              ${isActive ? 'Enter Active Campaign ✦' : 'Select Campaign &rarr;'}
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      gameTilesGrid.querySelectorAll('.game-tile-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const gameId = card.getAttribute('data-game-id');
+          openPasswordPrompt(gameId);
+        });
+      });
+    }
+
+    function openPasswordPrompt(gameId) {
+      pendingGameId = gameId || 'demo';
+      const game = (worldState.games || []).find(g => g.id === pendingGameId) || worldState.getActiveGame();
+
+      if (targetGameTitle) targetGameTitle.textContent = game.name;
+      if (targetGameSubtitle) targetGameSubtitle.textContent = game.subtitle;
+      if (gamePasswordError) gamePasswordError.style.display = 'none';
+      if (gamePasswordInput) {
+        gamePasswordInput.value = '';
+        setTimeout(() => gamePasswordInput.focus(), 80);
+      }
+
+      if (gameTilesView) gameTilesView.style.display = 'none';
+      if (gamePasswordView) gamePasswordView.style.display = 'block';
+    }
+
+    function showTilesView() {
+      if (gamePasswordView) gamePasswordView.style.display = 'none';
+      if (gameTilesView) gameTilesView.style.display = 'block';
+      renderGameTiles();
+    }
+
+    function handleGamePasswordSubmit(e) {
+      if (e) e.preventDefault();
+      const entered = (gamePasswordInput ? gamePasswordInput.value : '').trim();
+
+      if (!entered) {
+        showGamePasswordError('Please enter the campaign password.');
+        return;
+      }
+
+      const isValid = worldState.verifyGamePassword(pendingGameId, entered);
+      if (isValid) {
+        isGameUnlocked = true;
+        worldState.setActiveGame(pendingGameId);
+        updateHeaderGameName();
+
+        if (gameSelectModal) {
+          gameSelectModal.classList.remove('active');
+          if (closeGameSelectBtn) closeGameSelectBtn.style.display = 'inline-block';
+        }
+
+        if (typeof soundEngine !== 'undefined' && soundEngine.play) {
+          try { soundEngine.play('dice'); } catch (_) {}
+        }
+      } else {
+        showGamePasswordError('Incorrect campaign password. Please check your key or use "bubbles".');
+        if (gamePasswordInput) {
+          gamePasswordInput.classList.add('error');
+          gamePasswordInput.focus();
+          gamePasswordInput.select();
+        }
+      }
+    }
+
+    function showGamePasswordError(msg) {
+      if (!gamePasswordError) return;
+      gamePasswordError.textContent = msg;
+      gamePasswordError.style.display = 'block';
+    }
+
+    function updateHeaderGameName() {
+      if (!headerActiveGameName) return;
+      const active = worldState.getActiveGame();
+      headerActiveGameName.textContent = active ? (active.shortName || active.name) : 'Demo';
+    }
+
+    function openGameSelectModal() {
+      if (!gameSelectModal) return;
+      showTilesView();
+      gameSelectModal.classList.add('active');
+    }
+
+    function closeGameSelectModal() {
+      if (isGameUnlocked && gameSelectModal) {
+        gameSelectModal.classList.remove('active');
+      }
+    }
+
+    if (gamePasswordForm) gamePasswordForm.addEventListener('submit', handleGamePasswordSubmit);
+    if (backToTilesBtn) backToTilesBtn.addEventListener('click', showTilesView);
+    if (cancelPasswordBtn) cancelPasswordBtn.addEventListener('click', () => {
+      if (isGameUnlocked) {
+        closeGameSelectModal();
+      } else {
+        showTilesView();
+      }
+    });
+    if (closeGameSelectBtn) closeGameSelectBtn.addEventListener('click', closeGameSelectModal);
+    if (gameSwitcherBtn) gameSwitcherBtn.addEventListener('click', openGameSelectModal);
+
+    if (toggleGamePwBtn && gamePasswordInput) {
+      toggleGamePwBtn.addEventListener('click', () => {
+        const isPw = gamePasswordInput.type === 'password';
+        gamePasswordInput.type = isPw ? 'text' : 'password';
+        toggleGamePwBtn.textContent = isPw ? '🔒' : '👁';
+      });
+    }
+
+    // Initialize Game Portal on site load
+    renderGameTiles();
+    updateHeaderGameName();
+    openGameSelectModal();
+
     worldState.subscribe(() => {
       refreshView(worldState.prefs.activeTab);
       updatePlayerAuthUi();
+      updateHeaderGameName();
     });
 
     diceRoller.init();

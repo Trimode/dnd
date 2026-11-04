@@ -25,12 +25,18 @@
       <div class="header-left">
         <div class="world-crest">✦</div>
         <div class="world-branding">
-          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v0.6</span></h1>
+          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v0.7</span></h1>
           <div class="world-subtitle">Where Primal Elements Clash and Bleed into Diverse Lands & Peoples</div>
         </div>
       </div>
 
       <div class="header-controls">
+        <!-- Active Game Selector / Switcher Pill -->
+        <button class="game-switcher-btn" id="game-switcher-btn" title="Current Campaign: Demo (Click to switch campaign)">
+          <span class="game-switcher-icon">🎲</span>
+          <span class="game-switcher-text">Game: <strong id="header-active-game-name">Demo</strong></span>
+        </button>
+
         <!-- Global Search Trigger -->
         <button class="search-trigger-btn" id="search-trigger-btn" title="Search Lore (Ctrl+K)">
           <span>Quick Search</span>
@@ -101,6 +107,57 @@
       <section id="view-quests" class="view-section"></section>
       <section id="view-editor" class="view-section"></section>
     </main>
+
+    <!-- Game Selection Tile Portal Modal -->
+    <div class="modal-overlay game-portal-overlay active" id="game-select-modal">
+      <div class="modal-card game-portal-card" style="max-width: 880px;">
+        <div class="modal-header game-portal-header">
+          <div class="portal-brand">
+            <div class="portal-crest">✦</div>
+            <div class="portal-titles">
+              <h2>The Bleeding Realms of Aetheria</h2>
+              <div class="portal-subtitle">Campaign Selection Deck &bull; Choose an active world slot</div>
+            </div>
+          </div>
+          <button class="close-btn" id="close-game-select-modal" title="Close" style="display: none;">&times;</button>
+        </div>
+
+        <div class="modal-body game-portal-body" style="padding: 1.5rem;">
+          <!-- Step 1: Tiles View -->
+          <div id="game-tiles-view" class="game-tiles-view">
+            <p class="portal-instructions">Select a campaign below to launch into the compendium, atlas, and tactical battlemat. Password authorization required.</p>
+            <div class="game-tiles-grid" id="game-tiles-grid"></div>
+          </div>
+
+          <!-- Step 2: Password Authorization View -->
+          <div id="game-password-view" class="game-password-view" style="display: none;">
+            <div class="password-card-header">
+              <button type="button" class="btn btn-sm btn-back" id="back-to-tiles-btn">&larr; Back to Campaigns</button>
+              <h3 id="target-game-title" style="margin-top: 0.75rem; color: var(--text-gold);">The Bleeding Realms (Demo)</h3>
+              <p id="target-game-subtitle" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">Where Primal Elements Clash and Bleed into Diverse Lands & Peoples</p>
+            </div>
+
+            <div class="auth-alert-box error" id="game-password-error" style="display: none; margin-bottom: 1rem;"></div>
+
+            <form id="game-password-form" class="game-password-form">
+              <div class="form-group" style="margin-bottom: 1.25rem;">
+                <label for="game-password-input" style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Campaign Access Password:</label>
+                <div class="password-input-wrap" style="display: flex; gap: 0.5rem;">
+                  <input type="password" id="game-password-input" class="form-control" placeholder="Enter campaign password..." autocomplete="off" style="flex: 1;" required>
+                  <button type="button" class="btn btn-sm" id="toggle-game-pw-btn" title="Toggle Password Visibility">👁</button>
+                </div>
+                <small class="form-hint" style="display: block; margin-top: 0.35rem; color: var(--text-muted); font-size: 0.75rem;">Enter the authorized campaign key to unlock this world.</small>
+              </div>
+
+              <div class="portal-password-actions" style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" class="btn" id="cancel-password-btn">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="submit-game-password-btn">Enter Campaign ✦</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Player Authentication & Account Modal (Login / Register) -->
     <div class="modal-overlay" id="player-auth-modal">
@@ -292,6 +349,6 @@
   </div>
 
   <!-- Main Application Script -->
-  <script src="js/bundle.js?v=0.6"></script>
+  <script src="js/bundle.js?v=0.7"></script>
 </body>
 </html>

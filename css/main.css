@@ -62,6 +62,34 @@
   font-weight: 600;
 }
 
+.app-version-badge {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.2;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.12);
+  vertical-align: middle;
+}
+
+.app-version-badge::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 5px #38bdf8;
+}
+
 .world-subtitle {
   font-family: var(--font-sans);
   font-size: 0.8rem;

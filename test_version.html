@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Version Indicator Tests</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=0.6"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        // 1. Fetch index.html and parse DOM
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        // Check version indicator element
+        const versionEl = doc.getElementById('app-version-indicator');
+        assert(versionEl !== null, "#app-version-indicator element found in index.html");
+        assert(versionEl && versionEl.textContent.trim() === 'v0.6', "Indicator displays version 'v0.6' (found: '" + (versionEl ? versionEl.textContent.trim() : '') + "')");
+        assert(versionEl && versionEl.classList.contains('app-version-badge'), "Indicator has .app-version-badge class");
+
+        // Check location: must be in header-left / world-branding (top left of the screen)
+        const headerLeft = doc.querySelector('.app-header .header-left');
+        assert(headerLeft !== null, ".header-left exists in .app-header at top of screen");
+        const containsIndicator = headerLeft && headerLeft.contains(versionEl);
+        assert(containsIndicator === true, "Indicator is situated in top-left header (.header-left .world-branding)");
+
+        // Check bundle cache buster matches
+        const scriptTag = doc.querySelector('script[src*="bundle.js"]');
+        assert(scriptTag !== null, "bundle.js script tag found");
+        assert(scriptTag && scriptTag.getAttribute('src').includes('v=0.6'), "Script tag has matching cache-buster query 'bundle.js?v=0.6'");
+
+        // Check global and state version
+        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '0.6', "window.APP_VERSION is '0.6'");
+        assert(typeof worldState !== 'undefined' && worldState.version === '0.6', "worldState.version is '0.6'");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("VERSION INDICATOR TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -8,6 +8,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
+    this.version = '0.6';
     this.data = this.loadData();
     this.ensureDefaults();
     this.prefs = this.loadPrefs();

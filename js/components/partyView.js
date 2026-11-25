@@ -27,12 +27,39 @@ export function renderPartyView(container) {
         <button class="btn btn-primary" id="open-char-wizard-btn">+ Create / Upload Character</button>
         <button class="btn" id="import-char-json-btn">Import JSON</button>
         <button class="btn" id="export-party-json-btn">Export Party</button>
+        <button class="btn" id="export-campaign-snapshot-btn" style="border-color: #38bdf8; color: #7dd3fc;" title="Export Full v2.0 Campaign Cloud Snapshot">💾 Backup Campaign</button>
+        <button class="btn" id="import-campaign-snapshot-btn" style="border-color: #c084fc; color: #d8b4fe;" title="Restore Full v2.0 Campaign Snapshot">📂 Restore Snapshot</button>
       </div>
         <button class="btn btn-sm" id="btn-long-rest" style="background: rgba(76, 175, 80, 0.2); border-color: #4caf50; color: #a5d6a7;" title="Full HP & Resource Reset">
           Long Rest (Reset All)
         </button>
       </div>
     </div>
+
+    <!-- v2.0 Campaign Overview KPI Strip -->
+    ${(() => {
+      const kpi = typeof worldState.getCampaignKpiSummary === 'function' ? worldState.getCampaignKpiSummary() : { heroCount: characters.length, avgLevel, activeQuests: 0, alliedFactions: 0, merchantDiscountPct: 0 };
+      return `
+        <div id="v20-campaign-kpi-strip" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; margin-bottom: 1rem;">
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: var(--text-gold);">${kpi.heroCount}</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ACTIVE HEROES (AVG LV ${kpi.avgLevel})</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #7dd3fc;">${kpi.activeQuests}</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ACTIVE PARTY QUESTS</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #6ee7b7;">${kpi.alliedFactions} (${kpi.merchantDiscountPct}% OFF)</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ALLIED FACTIONS &amp; SHOP</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #d8b4fe;">${partyHpPercent}%</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">PARTY VITALITY</div>
+          </div>
+        </div>
+      `;
+    })()}
 
     <!-- Shared Bag of Holding / Party Stash Accordion -->
     <details style="margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
@@ -1081,4 +1108,28 @@ export function renderPartyView(container) {
       URL.revokeObjectURL(url);
     });
   }
+
+  // v2.0 Full Campaign Snapshot Backup & Restore (Supabase Synced)
+  container.querySelector('#export-campaign-snapshot-btn')?.addEventListener('click', () => {
+    const snap = worldState.exportCampaignSnapshot();
+    const blob = new Blob([snap], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aetheria_v20_campaign_snapshot_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  container.querySelector('#import-campaign-snapshot-btn')?.addEventListener('click', () => {
+    const raw = prompt('Paste a v2.0 Campaign Snapshot JSON to restore:');
+    if (!raw) return;
+    const res = worldState.importCampaignSnapshot(raw);
+    if (res.success) {
+      alert(`Campaign snapshot restored (${res.heroCount} heroes) and synced to Supabase!`);
+      renderPartyView(container);
+    } else {
+      alert('Restore failed: ' + res.error);
+    }
+  });
 }

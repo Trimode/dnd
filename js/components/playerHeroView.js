@@ -271,6 +271,9 @@ export function renderHeroView(container) {
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <h2 style="margin: 0; font-size: 1.6rem; color: var(--text-gold);">${activeHero.name}</h2>
             <span class="meta-badge">${activeHero.alignment || 'Neutral'}</span>
+            <button type="button" id="btn-hero-inspiration-pill" title="Toggle D&D 5.5e Heroic Inspiration" style="cursor:pointer; font-size: 0.74rem; padding: 2px 8px; border-radius: 12px; border: 1px solid ${activeHero.inspiration ? '#fde047' : 'var(--border-subtle)'}; background: ${activeHero.inspiration ? 'rgba(250, 204, 21, 0.22)' : 'var(--bg-tertiary)'}; color: ${activeHero.inspiration ? '#fde047' : 'var(--text-muted)'}; font-weight: bold;">
+              ⭐ ${activeHero.inspiration ? 'Heroic Inspiration READY' : 'No Inspiration'}
+            </button>
             ${charOwner ? `
               <span style="font-size: 0.75rem; background: rgba(76, 175, 80, 0.2); border: 1px solid #4caf50; color: #a5d6a7; padding: 0.2rem 0.5rem; border-radius: 12px; font-weight: bold;">
                 Owned by ${charOwner.displayName} (@${charOwner.username})
@@ -305,6 +308,20 @@ export function renderHeroView(container) {
 
     <!-- Live Dice Check Result Banner -->
     <div id="hero-dice-result-banner" style="display: none; margin-bottom: 1rem;" class="bastion-turn-log"></div>
+
+    <!-- v2.0 Concentration Save Auto-Tracker Banner -->
+    ${activeHero.pendingConcentrationSave ? `
+      <div id="hero-concentration-banner" style="margin-bottom: 1rem; background: rgba(245, 158, 11, 0.16); border: 1px solid rgba(251, 191, 36, 0.6); border-radius: var(--radius-md); padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.6rem;">
+        <div>
+          <strong style="color: #fde047; font-size: 0.92rem;">🔮 CONCENTRATION CHECK REQUIRED — ${activeHero.pendingConcentrationSave.spell}</strong>
+          <div style="font-size: 0.78rem; color: var(--text-secondary);">Took ${activeHero.pendingConcentrationSave.damage} damage → Constitution Saving Throw <strong>DC ${activeHero.pendingConcentrationSave.dc}</strong></div>
+        </div>
+        <div style="display: flex; gap: 0.4rem;">
+          <button type="button" class="btn btn-sm btn-primary" id="btn-hero-roll-conc-save">🎲 Roll CON Save (DC ${activeHero.pendingConcentrationSave.dc})</button>
+          ${activeHero.inspiration ? `<button type="button" class="btn btn-sm" id="btn-hero-roll-conc-adv" style="border-color: #fde047; color: #fde047;">⭐ Roll w/ Inspiration</button>` : ''}
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Interactive 5.5e Death Saving Throws Banner (Active when at 0 HP) -->
     ${(activeHero.hpCurrent || 0) <= 0 ? `
@@ -1080,6 +1097,22 @@ export function renderHeroView(container) {
     const res = worldState.castSpell(activeHero.id, spName.trim(), slotLvl, isConc);
     if (!res.success && res.error) alert(res.error);
     else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+    renderHeroView(container);
+  });
+
+  // v2.0 Heroic Inspiration & Concentration Auto-Save Handlers
+  container.querySelector('#btn-hero-inspiration-pill')?.addEventListener('click', () => {
+    worldState.toggleCharacterInspiration(activeHero.id);
+    renderHeroView(container);
+  });
+  container.querySelector('#btn-hero-roll-conc-save')?.addEventListener('click', () => {
+    const res = worldState.rollConcentrationSave(activeHero.id, false);
+    if (res.success) alert(`Concentration Save (${res.spell}): Rolled ${res.total} vs DC ${res.dc} → ${res.passed ? 'MAINTAINED!' : 'CONCENTRATION LOST!'}`);
+    renderHeroView(container);
+  });
+  container.querySelector('#btn-hero-roll-conc-adv')?.addEventListener('click', () => {
+    const res = worldState.rollConcentrationSave(activeHero.id, true);
+    if (res.success) alert(`Concentration Save w/ Inspiration (${res.spell}): Rolled ${res.total} vs DC ${res.dc} → ${res.passed ? 'MAINTAINED!' : 'CONCENTRATION LOST!'}`);
     renderHeroView(container);
   });
 

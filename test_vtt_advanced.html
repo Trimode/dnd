@@ -11,7 +11,7 @@
   <div id="combat-mount" style="display: none;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=1.9"></script>
+  <script src="js/bundle.js?v=2.0"></script>
 
   <script>
     (async function() {
@@ -101,13 +101,13 @@
         unsubPres();
         assert(lastOnline.length === 2, "Presence tracker notifies listeners with 2 online players");
 
-        // 6. Verify DOM presence indicator & v1.9
+        // 6. Verify DOM presence indicator & v2.0
         const res = await fetch('index.html');
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         assert(doc.getElementById('online-presence-indicator') !== null, "#online-presence-indicator pill exists in index.html");
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v1.9', "Version indicator updated to v1.9");
+        assert(verEl && verEl.textContent.trim() === 'v2.0', "Version indicator updated to v2.0");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

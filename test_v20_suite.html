@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v2.0 Milestone Tests: AoE Templates, Concentration Auto-Save, DM Screen, XP Split & Full Backup</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=2.0"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Battlemat AoE Spell Templates (Sphere, Cone, Line, Cube)
+        await worldState.clearAoeTemplates();
+        assert(worldState.getAoeTemplates().length === 0, "Battlemat AoE templates start clear");
+        const fire = await worldState.addAoeTemplate({ shape: 'sphere', radiusFt: 20, x: 5, y: 5, label: 'Fireball (20ft)' });
+        const bolt = await worldState.addAoeTemplate({ shape: 'line', radiusFt: 30, x: 2, y: 4, label: 'Lightning Bolt (30ft)' });
+        assert(worldState.getAoeTemplates().length === 2 && fire.shape === 'sphere' && bolt.shape === 'line', "Placed Sphere & Line AoE templates on Battlemat");
+        await worldState.clearAoeTemplates();
+        assert(worldState.getAoeTemplates().length === 0, "Clearing AoE templates removes all overlays");
+
+        // 2. Concentration Save Auto-Tracker & Heroic Inspiration (D&D 5.5e)
+        const cleric = worldState.createPartyCharacter({
+          name: 'Seraphina Dawn',
+          level: 5,
+          species: 'Aasimar',
+          classRole: 'Cleric (Light)',
+          hitDie: 8,
+          hpMax: 40,
+          stats: { str: 12, dex: 10, con: 16, int: 10, wis: 18, cha: 14 } // CON +3
+        });
+        worldState.castSpell(cleric.id, 'Spirit Guardians', 3, true);
+        assert(cleric.concentratingOn === 'Spirit Guardians', "Cleric concentrating on Spirit Guardians");
+
+        worldState.adjustPartyHp(cleric.id, -26); // 26 dmg -> DC max(10, floor(26/2)) = DC 13
+        assert(cleric.pendingConcentrationSave && cleric.pendingConcentrationSave.dc === 13, "Taking 26 damage auto-triggers Concentration Check DC 13");
+
+        cleric.inspiration = true;
+        const saveRes = worldState.rollConcentrationSave(cleric.id, true);
+        assert(saveRes.success && saveRes.usedInspiration && cleric.inspiration === false && cleric.pendingConcentrationSave === null, "Rolling Concentration Save consumes Heroic Inspiration & resolves check");
+
+        // 3. 5.5e DM Screen Quick-Reference & Encounter XP Auto-Distributor
+        const dmRef = worldState.getDmScreenReference();
+        assert(dmRef.dcTable.length === 6 && dmRef.coverRules.length === 3 && dmRef.exhaustion2024.includes('−2'), "D&D 5.5e DM Screen Quick Reference loaded with 2024 rules");
+
+        cleric.level = 1;
+        cleric.xp = 0;
+        cleric.currency = { gp: 10, sp: 0, cp: 0 };
+        const heroCount = worldState.data.partyCharacters.length;
+        const xpRes = worldState.awardEncounterXp(heroCount * 350, heroCount * 50, 'Dragon Ambush');
+        assert(xpRes.success && xpRes.xpEach === 350 && xpRes.gpEach === 50, "Encounter XP & GP split evenly across all " + heroCount + " party heroes");
+        assert(cleric.xp === 350 && cleric.currency.gp === 60 && cleric.readyToLevelUp === true, "Hero XP (350 >= 300) flags Ready to Level Up & credits +50 GP");
+
+        // 4. Full Campaign Snapshot Backup, Restore & KPI Summary
+        const kpi = worldState.getCampaignKpiSummary();
+        assert(kpi.heroCount === heroCount && kpi.avgLevel > 0, "Campaign KPI summary computes live hero count & average level");
+
+        const snapJson = worldState.exportCampaignSnapshot();
+        const parsedSnap = JSON.parse(snapJson);
+        assert(parsedSnap.snapshotVersion === '2.0' && Array.isArray(parsedSnap.data.partyCharacters), "Full v2.0 Campaign Snapshot exported with valid schema");
+
+        const restoreRes = worldState.importCampaignSnapshot(snapJson);
+        assert(restoreRes.success && restoreRes.heroCount === heroCount, "Full v2.0 Campaign Snapshot restores cleanly");
+
+        // 5. Verify v2.0 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v2.0', "Version indicator updated to v2.0");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V2.0 MILESTONE SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

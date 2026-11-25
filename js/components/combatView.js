@@ -51,7 +51,19 @@ export function renderCombatView(container) {
           <button id="combat-end-btn" class="btn btn-sm" style="font-weight: bold; padding: 0.4rem 0.9rem; display: none; color: #fca5a5; border-color: rgba(239, 68, 68, 0.5);">
             End Combat
           </button>
+          ${isDm ? `<button id="combat-award-xp-btn" class="btn btn-sm" style="border-color: #fde047; color: #fde047;" title="Distribute Encounter XP & Gold to Party (Supabase)">🏆 Award XP</button>` : ''}
+          <button id="combat-dm-screen-btn" class="btn btn-sm" style="border-color: #38bdf8; color: #7dd3fc;" title="Open D&D 5.5e Quick Reference DM Screen">📖 5.5e DM Screen</button>
         </div>
+      </div>
+
+      <!-- v2.0 AoE Spell Templates Toolbar (Supabase Synced) -->
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.75rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); margin-bottom: 0.5rem; font-size: 0.75rem;">
+        <strong style="color: var(--text-gold);">🎯 AoE Spell Templates (Supabase):</strong>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="sphere" data-radius="20" data-color="rgba(239,68,68,0.34)" data-label="Fireball (20ft Sphere)" style="font-size: 0.7rem; padding: 2px 7px;">🔥 20ft Sphere</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="cone" data-radius="15" data-color="rgba(249,115,22,0.34)" data-label="Burning Hands (15ft Cone)" style="font-size: 0.7rem; padding: 2px 7px;">🌊 15ft Cone</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="line" data-radius="30" data-color="rgba(56,189,248,0.36)" data-label="Lightning Bolt (30ft Line)" style="font-size: 0.7rem; padding: 2px 7px;">⚡ 30ft Line</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="cube" data-radius="20" data-color="rgba(168,85,247,0.34)" data-label="Thunderwave (20ft Cube)" style="font-size: 0.7rem; padding: 2px 7px;">🧊 20ft Cube</button>
+        <button type="button" class="btn btn-sm" id="combat-clear-aoe-btn" style="font-size: 0.7rem; padding: 2px 7px; border-color: #f87171; color: #fca5a5;">✕ Clear AoE</button>
       </div>
 
       <!-- 3-Column Tactical Layout -->
@@ -2971,6 +2983,39 @@ function initCombatEngine(container) {
       if (eff.life <= 0) cState.effects.splice(i, 1);
     }
 
+    // v2.0 AoE Spell Templates Overlay (Supabase Synced)
+    if (typeof worldState.getAoeTemplates === 'function') {
+      const templates = worldState.getAoeTemplates();
+      templates.forEach(t => {
+        const cx = (t.x + 0.5) * ts;
+        const cy = (t.y + 0.5) * ts;
+        const rPx = Math.max(ts, ((t.radiusFt || 20) / 5) * ts);
+        ctx.save();
+        ctx.fillStyle = t.color || 'rgba(239, 68, 68, 0.34)';
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (t.shape === 'cube') {
+          ctx.rect(cx - rPx / 2, cy - rPx / 2, rPx, rPx);
+        } else if (t.shape === 'line') {
+          ctx.rect(cx, cy - ts * 0.45, rPx, ts * 0.9);
+        } else if (t.shape === 'cone') {
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, rPx, -Math.PI / 6, Math.PI / 6);
+          ctx.closePath();
+        } else {
+          ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText(t.label || 'AoE', cx, cy - 4);
+        ctx.restore();
+      });
+    }
+
     // Fog of War Overlay (opaque for players, translucent for DM)
     const fogKeys = Object.keys(cState.fogOfWar || {});
     if (fogKeys.length > 0) {
@@ -2990,6 +3035,41 @@ function initCombatEngine(container) {
     animationFrameId = requestAnimationFrame(render);
   }
   animationFrameId = requestAnimationFrame(render);
+
+  // v2.0 AoE Templates, Encounter XP Distributor & 5.5e DM Screen Handlers
+  container.querySelectorAll('.combat-aoe-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const shape = btn.getAttribute('data-shape');
+      const radiusFt = parseInt(btn.getAttribute('data-radius'), 10) || 20;
+      const color = btn.getAttribute('data-color');
+      const label = btn.getAttribute('data-label');
+      await worldState.addAoeTemplate({ shape, radiusFt, x: 5, y: 5, color, label });
+      logMsg(`Placed AoE Template: ${label}`, 'system');
+    });
+  });
+
+  container.querySelector('#combat-clear-aoe-btn')?.addEventListener('click', async () => {
+    await worldState.clearAoeTemplates();
+    logMsg('Cleared all Battlemat AoE templates.', 'system');
+  });
+
+  container.querySelector('#combat-award-xp-btn')?.addEventListener('click', () => {
+    const xp = parseInt(prompt('Total Encounter XP to split across party:', '1200') || '0', 10);
+    const gp = parseInt(prompt('Total Gold Pieces (GP) loot to split:', '200') || '0', 10);
+    if (!xp && !gp) return;
+    const res = worldState.awardEncounterXp(xp, gp, 'Combat Victory');
+    if (res.success) {
+      alert(`Awarded +${res.xpEach} XP & +${res.gpEach} GP to each hero!${res.readyHeroes.length ? `\nReady to Level Up: ${res.readyHeroes.join(', ')}` : ''}`);
+    }
+  });
+
+  container.querySelector('#combat-dm-screen-btn')?.addEventListener('click', () => {
+    const ref = worldState.getDmScreenReference();
+    const dcLines = ref.dcTable.map(d => `${d.label}: DC ${d.dc}`).join(' | ');
+    const covLines = ref.coverRules.map(c => `${c.type}: ${c.bonus}`).join('\n');
+    const paceLines = ref.travelPace.map(p => `${p.pace}: ${p.milesPerDay} mi/day (${p.effect})`).join('\n');
+    alert(`📖 D&D 5.5e (2024) DM QUICK SCREEN\n\n[DC TABLE]\n${dcLines}\n\n[COVER]\n${covLines}\n\n[EXHAUSTION 2024]\n${ref.exhaustion2024}\n\n[TRAVEL PACE]\n${paceLines}`);
+  });
 
   // Expose controller on container and window for testing, automated verification and external integrations
   container._combatController = {

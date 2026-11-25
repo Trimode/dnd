@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.9';
+    this.version = '2.0';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -1828,8 +1828,207 @@ class WorldStateManager {
       } else {
         char.hpCurrent = Math.max(0, Math.min(char.hpMax, (char.hpCurrent || char.hpMax) + delta));
       }
+      // D&D 5.5e Concentration Save Auto-Tracker (v2.0)
+      if (delta < 0 && char.concentratingOn) {
+        const dmg = Math.abs(delta);
+        const dc = Math.max(10, Math.floor(dmg / 2));
+        char.pendingConcentrationSave = { spell: char.concentratingOn, dc, damage: dmg, timestamp: Date.now() };
+      }
     }
     this.saveData();
+  }
+
+  // ==========================================
+  // v2.0: CONCENTRATION AUTO-TRACKER & HEROIC INSPIRATION
+  // ==========================================
+  rollConcentrationSave(charId, useInspiration = false) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+    const pending = char.pendingConcentrationSave || { spell: char.concentratingOn || 'Active Spell', dc: 10, damage: 0 };
+    const conMod = Math.floor((((char.stats && char.stats.con) || 10) - 10) / 2);
+    const d1 = Math.floor(Math.random() * 20) + 1;
+    const d2 = Math.floor(Math.random() * 20) + 1;
+    const hasAdv = Boolean(useInspiration && char.inspiration);
+    if (hasAdv) char.inspiration = false;
+    const d20 = hasAdv ? Math.max(d1, d2) : d1;
+    const total = d20 + conMod;
+    const passed = total >= pending.dc;
+    char.pendingConcentrationSave = null;
+    if (!passed) {
+      char.concentratingOn = null;
+    }
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '🔮',
+      rollType: 'save',
+      label: `Concentration Save (${pending.spell})`,
+      formula: hasAdv ? `max(${d1},${d2}) + ${conMod} [Heroic Inspiration]` : `1d20(${d20}) ${conMod >= 0 ? '+' : ''}${conMod}`,
+      d20Result: d20,
+      total,
+      dc: pending.dc,
+      success: passed,
+      note: passed ? `Maintained concentration on ${pending.spell}` : `Lost concentration on ${pending.spell}!`
+    });
+    return { success: true, passed, d20, total, dc: pending.dc, spell: pending.spell, usedInspiration: hasAdv };
+  }
+
+  spendHeroicInspiration(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !char.inspiration) return { success: false, error: 'No Heroic Inspiration available' };
+    char.inspiration = false;
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '⭐',
+      rollType: 'check',
+      label: 'Spent Heroic Inspiration',
+      formula: 'D&D 5.5e Reroll / Advantage',
+      total: 20,
+      note: `${char.name} invoked Heroic Inspiration!`
+    });
+    return { success: true };
+  }
+
+  // ==========================================
+  // v2.0: BATTLEMAT AOE SPELL TEMPLATES (SUPABASE SYNCED)
+  // ==========================================
+  getAoeTemplates() {
+    if (!this.data.battlematState) this.data.battlematState = {};
+    if (!Array.isArray(this.data.battlematState.aoeTemplates)) {
+      this.data.battlematState.aoeTemplates = [];
+    }
+    return this.data.battlematState.aoeTemplates;
+  }
+
+  async addAoeTemplate({ shape = 'sphere', radiusFt = 20, x = 5, y = 5, color = 'rgba(239, 68, 68, 0.35)', label = 'Fireball (20ft)' } = {}) {
+    const list = this.getAoeTemplates();
+    const tpl = {
+      id: 'aoe-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      shape,
+      radiusFt: Number(radiusFt) || 20,
+      x: Number(x) || 5,
+      y: Number(y) || 5,
+      color,
+      label
+    };
+    list.push(tpl);
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveBattlematState(this.activeGameId || 'demo', this.data.battlematState);
+    }
+    return tpl;
+  }
+
+  async clearAoeTemplates() {
+    if (!this.data.battlematState) this.data.battlematState = {};
+    this.data.battlematState.aoeTemplates = [];
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveBattlematState(this.activeGameId || 'demo', this.data.battlematState);
+    }
+    return true;
+  }
+
+  // ==========================================
+  // v2.0: 5.5e DM SCREEN QUICK-REFERENCE & ENCOUNTER XP DISTRIBUTOR
+  // ==========================================
+  getDmScreenReference() {
+    return {
+      dcTable: [
+        { label: 'Very Easy', dc: 5 },
+        { label: 'Easy', dc: 10 },
+        { label: 'Medium', dc: 15 },
+        { label: 'Hard', dc: 20 },
+        { label: 'Very Hard', dc: 25 },
+        { label: 'Nearly Impossible', dc: 30 }
+      ],
+      coverRules: [
+        { type: 'Half Cover', bonus: '+2 AC and DEX Saves' },
+        { type: 'Three-Quarters Cover', bonus: '+5 AC and DEX Saves' },
+        { type: 'Total Cover', bonus: 'Cannot be targeted directly' }
+      ],
+      exhaustion2024: 'D&D 5.5e (2024): Each level of Exhaustion imposes −2 to all D20 Tests and −5 ft Speed (Death at Level 6). Long Rest reduces Exhaustion by 1.',
+      travelPace: [
+        { pace: 'Fast', milesPerDay: 30, effect: '−5 Passive Perception' },
+        { pace: 'Normal', milesPerDay: 24, effect: 'Standard awareness' },
+        { pace: 'Slow', milesPerDay: 18, effect: 'Able to use Stealth' }
+      ]
+    };
+  }
+
+  awardEncounterXp(totalXp = 0, goldTotal = 0, label = 'Combat Victory') {
+    const heroes = this.data.partyCharacters || [];
+    if (heroes.length === 0) return { success: false, error: 'No party heroes to reward' };
+    const xpEach = Math.max(0, Math.floor((Number(totalXp) || 0) / heroes.length));
+    const gpEach = Math.max(0, Math.floor((Number(goldTotal) || 0) / heroes.length));
+    const xpThresholds = [0, 0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000];
+    const readyHeroes = [];
+    heroes.forEach(h => {
+      h.xp = (Number(h.xp) || 0) + xpEach;
+      if (!h.currency) h.currency = { gp: 50, sp: 0, cp: 0 };
+      h.currency.gp = (Number(h.currency.gp) || 0) + gpEach;
+      const nextLvl = Math.min(20, (parseInt(h.level, 10) || 1) + 1);
+      if (h.level < 20 && h.xp >= (xpThresholds[nextLvl] || 999999)) {
+        h.readyToLevelUp = true;
+        readyHeroes.push(h.name);
+      }
+    });
+    this.logDiceRoll({
+      rollerName: 'Dungeon Master',
+      rollerAvatar: '🏆',
+      rollType: 'level_up',
+      label: `${label}: +${xpEach} XP${gpEach > 0 ? ` & +${gpEach} GP` : ''} each`,
+      formula: `${totalXp} XP / ${heroes.length} heroes`,
+      total: xpEach,
+      note: readyHeroes.length ? `Ready to Level Up: ${readyHeroes.join(', ')}` : 'XP & Gold distributed to party'
+    });
+    return { success: true, xpEach, gpEach, readyHeroes };
+  }
+
+  // ==========================================
+  // v2.0: FULL CAMPAIGN SNAPSHOT BACKUP, RESTORE & KPI SUMMARY
+  // ==========================================
+  exportCampaignSnapshot() {
+    return JSON.stringify({
+      snapshotVersion: '2.0',
+      exportedAt: new Date().toISOString(),
+      campaignId: this.activeGameId || 'demo',
+      data: this.data
+    }, null, 2);
+  }
+
+  importCampaignSnapshot(jsonStr) {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const payload = parsed && parsed.data ? parsed.data : parsed;
+      if (!payload || !Array.isArray(payload.partyCharacters)) {
+        return { success: false, error: 'Invalid v2.0 campaign snapshot format.' };
+      }
+      this.data = payload;
+      this.ensureDefaults();
+      this.saveData();
+      return { success: true, heroCount: this.data.partyCharacters.length };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  getCampaignKpiSummary() {
+    const heroes = this.data.partyCharacters || [];
+    const avgLevel = heroes.length
+      ? Number((heroes.reduce((s, h) => s + (parseInt(h.level, 10) || 1), 0) / heroes.length).toFixed(1))
+      : 0;
+    const activeQuests = (this.data.campaignQuests || []).filter(q => q.status === 'active').length;
+    const alliedFactions = (this.data.factions || []).filter(f => (f.playerStanding || 0) >= 2).length;
+    return {
+      version: this.version || '2.0',
+      heroCount: heroes.length,
+      avgLevel,
+      activeQuests,
+      alliedFactions,
+      merchantDiscountPct: this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0,
+      chatCount: (this.data.campaignChat || []).length,
+      aoeCount: this.getAoeTemplates().length
+    };
   }
 
   togglePartyCondition(charId, conditionName) {

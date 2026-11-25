@@ -2553,7 +2553,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.9';
+    this.version = '2.0';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -4372,8 +4372,207 @@ class WorldStateManager {
       } else {
         char.hpCurrent = Math.max(0, Math.min(char.hpMax, (char.hpCurrent || char.hpMax) + delta));
       }
+      // D&D 5.5e Concentration Save Auto-Tracker (v2.0)
+      if (delta < 0 && char.concentratingOn) {
+        const dmg = Math.abs(delta);
+        const dc = Math.max(10, Math.floor(dmg / 2));
+        char.pendingConcentrationSave = { spell: char.concentratingOn, dc, damage: dmg, timestamp: Date.now() };
+      }
     }
     this.saveData();
+  }
+
+  // ==========================================
+  // v2.0: CONCENTRATION AUTO-TRACKER & HEROIC INSPIRATION
+  // ==========================================
+  rollConcentrationSave(charId, useInspiration = false) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+    const pending = char.pendingConcentrationSave || { spell: char.concentratingOn || 'Active Spell', dc: 10, damage: 0 };
+    const conMod = Math.floor((((char.stats && char.stats.con) || 10) - 10) / 2);
+    const d1 = Math.floor(Math.random() * 20) + 1;
+    const d2 = Math.floor(Math.random() * 20) + 1;
+    const hasAdv = Boolean(useInspiration && char.inspiration);
+    if (hasAdv) char.inspiration = false;
+    const d20 = hasAdv ? Math.max(d1, d2) : d1;
+    const total = d20 + conMod;
+    const passed = total >= pending.dc;
+    char.pendingConcentrationSave = null;
+    if (!passed) {
+      char.concentratingOn = null;
+    }
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '🔮',
+      rollType: 'save',
+      label: `Concentration Save (${pending.spell})`,
+      formula: hasAdv ? `max(${d1},${d2}) + ${conMod} [Heroic Inspiration]` : `1d20(${d20}) ${conMod >= 0 ? '+' : ''}${conMod}`,
+      d20Result: d20,
+      total,
+      dc: pending.dc,
+      success: passed,
+      note: passed ? `Maintained concentration on ${pending.spell}` : `Lost concentration on ${pending.spell}!`
+    });
+    return { success: true, passed, d20, total, dc: pending.dc, spell: pending.spell, usedInspiration: hasAdv };
+  }
+
+  spendHeroicInspiration(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !char.inspiration) return { success: false, error: 'No Heroic Inspiration available' };
+    char.inspiration = false;
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '⭐',
+      rollType: 'check',
+      label: 'Spent Heroic Inspiration',
+      formula: 'D&D 5.5e Reroll / Advantage',
+      total: 20,
+      note: `${char.name} invoked Heroic Inspiration!`
+    });
+    return { success: true };
+  }
+
+  // ==========================================
+  // v2.0: BATTLEMAT AOE SPELL TEMPLATES (SUPABASE SYNCED)
+  // ==========================================
+  getAoeTemplates() {
+    if (!this.data.battlematState) this.data.battlematState = {};
+    if (!Array.isArray(this.data.battlematState.aoeTemplates)) {
+      this.data.battlematState.aoeTemplates = [];
+    }
+    return this.data.battlematState.aoeTemplates;
+  }
+
+  async addAoeTemplate({ shape = 'sphere', radiusFt = 20, x = 5, y = 5, color = 'rgba(239, 68, 68, 0.35)', label = 'Fireball (20ft)' } = {}) {
+    const list = this.getAoeTemplates();
+    const tpl = {
+      id: 'aoe-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      shape,
+      radiusFt: Number(radiusFt) || 20,
+      x: Number(x) || 5,
+      y: Number(y) || 5,
+      color,
+      label
+    };
+    list.push(tpl);
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveBattlematState(this.activeGameId || 'demo', this.data.battlematState);
+    }
+    return tpl;
+  }
+
+  async clearAoeTemplates() {
+    if (!this.data.battlematState) this.data.battlematState = {};
+    this.data.battlematState.aoeTemplates = [];
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveBattlematState(this.activeGameId || 'demo', this.data.battlematState);
+    }
+    return true;
+  }
+
+  // ==========================================
+  // v2.0: 5.5e DM SCREEN QUICK-REFERENCE & ENCOUNTER XP DISTRIBUTOR
+  // ==========================================
+  getDmScreenReference() {
+    return {
+      dcTable: [
+        { label: 'Very Easy', dc: 5 },
+        { label: 'Easy', dc: 10 },
+        { label: 'Medium', dc: 15 },
+        { label: 'Hard', dc: 20 },
+        { label: 'Very Hard', dc: 25 },
+        { label: 'Nearly Impossible', dc: 30 }
+      ],
+      coverRules: [
+        { type: 'Half Cover', bonus: '+2 AC and DEX Saves' },
+        { type: 'Three-Quarters Cover', bonus: '+5 AC and DEX Saves' },
+        { type: 'Total Cover', bonus: 'Cannot be targeted directly' }
+      ],
+      exhaustion2024: 'D&D 5.5e (2024): Each level of Exhaustion imposes −2 to all D20 Tests and −5 ft Speed (Death at Level 6). Long Rest reduces Exhaustion by 1.',
+      travelPace: [
+        { pace: 'Fast', milesPerDay: 30, effect: '−5 Passive Perception' },
+        { pace: 'Normal', milesPerDay: 24, effect: 'Standard awareness' },
+        { pace: 'Slow', milesPerDay: 18, effect: 'Able to use Stealth' }
+      ]
+    };
+  }
+
+  awardEncounterXp(totalXp = 0, goldTotal = 0, label = 'Combat Victory') {
+    const heroes = this.data.partyCharacters || [];
+    if (heroes.length === 0) return { success: false, error: 'No party heroes to reward' };
+    const xpEach = Math.max(0, Math.floor((Number(totalXp) || 0) / heroes.length));
+    const gpEach = Math.max(0, Math.floor((Number(goldTotal) || 0) / heroes.length));
+    const xpThresholds = [0, 0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000];
+    const readyHeroes = [];
+    heroes.forEach(h => {
+      h.xp = (Number(h.xp) || 0) + xpEach;
+      if (!h.currency) h.currency = { gp: 50, sp: 0, cp: 0 };
+      h.currency.gp = (Number(h.currency.gp) || 0) + gpEach;
+      const nextLvl = Math.min(20, (parseInt(h.level, 10) || 1) + 1);
+      if (h.level < 20 && h.xp >= (xpThresholds[nextLvl] || 999999)) {
+        h.readyToLevelUp = true;
+        readyHeroes.push(h.name);
+      }
+    });
+    this.logDiceRoll({
+      rollerName: 'Dungeon Master',
+      rollerAvatar: '🏆',
+      rollType: 'level_up',
+      label: `${label}: +${xpEach} XP${gpEach > 0 ? ` & +${gpEach} GP` : ''} each`,
+      formula: `${totalXp} XP / ${heroes.length} heroes`,
+      total: xpEach,
+      note: readyHeroes.length ? `Ready to Level Up: ${readyHeroes.join(', ')}` : 'XP & Gold distributed to party'
+    });
+    return { success: true, xpEach, gpEach, readyHeroes };
+  }
+
+  // ==========================================
+  // v2.0: FULL CAMPAIGN SNAPSHOT BACKUP, RESTORE & KPI SUMMARY
+  // ==========================================
+  exportCampaignSnapshot() {
+    return JSON.stringify({
+      snapshotVersion: '2.0',
+      exportedAt: new Date().toISOString(),
+      campaignId: this.activeGameId || 'demo',
+      data: this.data
+    }, null, 2);
+  }
+
+  importCampaignSnapshot(jsonStr) {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const payload = parsed && parsed.data ? parsed.data : parsed;
+      if (!payload || !Array.isArray(payload.partyCharacters)) {
+        return { success: false, error: 'Invalid v2.0 campaign snapshot format.' };
+      }
+      this.data = payload;
+      this.ensureDefaults();
+      this.saveData();
+      return { success: true, heroCount: this.data.partyCharacters.length };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  getCampaignKpiSummary() {
+    const heroes = this.data.partyCharacters || [];
+    const avgLevel = heroes.length
+      ? Number((heroes.reduce((s, h) => s + (parseInt(h.level, 10) || 1), 0) / heroes.length).toFixed(1))
+      : 0;
+    const activeQuests = (this.data.campaignQuests || []).filter(q => q.status === 'active').length;
+    const alliedFactions = (this.data.factions || []).filter(f => (f.playerStanding || 0) >= 2).length;
+    return {
+      version: this.version || '2.0',
+      heroCount: heroes.length,
+      avgLevel,
+      activeQuests,
+      alliedFactions,
+      merchantDiscountPct: this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0,
+      chatCount: (this.data.campaignChat || []).length,
+      aoeCount: this.getAoeTemplates().length
+    };
   }
 
   togglePartyCondition(charId, conditionName) {
@@ -8221,12 +8420,39 @@ function renderPartyView(container) {
         <button class="btn btn-primary" id="open-char-wizard-btn">+ Create / Upload Character</button>
         <button class="btn" id="import-char-json-btn">Import JSON</button>
         <button class="btn" id="export-party-json-btn">Export Party</button>
+        <button class="btn" id="export-campaign-snapshot-btn" style="border-color: #38bdf8; color: #7dd3fc;" title="Export Full v2.0 Campaign Cloud Snapshot">💾 Backup Campaign</button>
+        <button class="btn" id="import-campaign-snapshot-btn" style="border-color: #c084fc; color: #d8b4fe;" title="Restore Full v2.0 Campaign Snapshot">📂 Restore Snapshot</button>
       </div>
         <button class="btn btn-sm" id="btn-long-rest" style="background: rgba(76, 175, 80, 0.2); border-color: #4caf50; color: #a5d6a7;" title="Full HP & Resource Reset">
           Long Rest (Reset All)
         </button>
       </div>
     </div>
+
+    <!-- v2.0 Campaign Overview KPI Strip -->
+    ${(() => {
+      const kpi = typeof worldState.getCampaignKpiSummary === 'function' ? worldState.getCampaignKpiSummary() : { heroCount: characters.length, avgLevel, activeQuests: 0, alliedFactions: 0, merchantDiscountPct: 0 };
+      return `
+        <div id="v20-campaign-kpi-strip" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; margin-bottom: 1rem;">
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: var(--text-gold);">${kpi.heroCount}</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ACTIVE HEROES (AVG LV ${kpi.avgLevel})</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #7dd3fc;">${kpi.activeQuests}</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ACTIVE PARTY QUESTS</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #6ee7b7;">${kpi.alliedFactions} (${kpi.merchantDiscountPct}% OFF)</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">ALLIED FACTIONS &amp; SHOP</div>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.75rem; text-align: center;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #d8b4fe;">${partyHpPercent}%</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">PARTY VITALITY</div>
+          </div>
+        </div>
+      `;
+    })()}
 
     <!-- Shared Bag of Holding / Party Stash Accordion -->
     <details style="margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
@@ -9275,6 +9501,30 @@ function renderPartyView(container) {
       URL.revokeObjectURL(url);
     });
   }
+
+  // v2.0 Full Campaign Snapshot Backup & Restore (Supabase Synced)
+  container.querySelector('#export-campaign-snapshot-btn')?.addEventListener('click', () => {
+    const snap = worldState.exportCampaignSnapshot();
+    const blob = new Blob([snap], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aetheria_v20_campaign_snapshot_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  container.querySelector('#import-campaign-snapshot-btn')?.addEventListener('click', () => {
+    const raw = prompt('Paste a v2.0 Campaign Snapshot JSON to restore:');
+    if (!raw) return;
+    const res = worldState.importCampaignSnapshot(raw);
+    if (res.success) {
+      alert(`Campaign snapshot restored (${res.heroCount} heroes) and synced to Supabase!`);
+      renderPartyView(container);
+    } else {
+      alert('Restore failed: ' + res.error);
+    }
+  });
 }
 
   // COMPONENT: playerHeroView.js
@@ -9546,6 +9796,9 @@ function renderHeroView(container) {
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <h2 style="margin: 0; font-size: 1.6rem; color: var(--text-gold);">${activeHero.name}</h2>
             <span class="meta-badge">${activeHero.alignment || 'Neutral'}</span>
+            <button type="button" id="btn-hero-inspiration-pill" title="Toggle D&D 5.5e Heroic Inspiration" style="cursor:pointer; font-size: 0.74rem; padding: 2px 8px; border-radius: 12px; border: 1px solid ${activeHero.inspiration ? '#fde047' : 'var(--border-subtle)'}; background: ${activeHero.inspiration ? 'rgba(250, 204, 21, 0.22)' : 'var(--bg-tertiary)'}; color: ${activeHero.inspiration ? '#fde047' : 'var(--text-muted)'}; font-weight: bold;">
+              ⭐ ${activeHero.inspiration ? 'Heroic Inspiration READY' : 'No Inspiration'}
+            </button>
             ${charOwner ? `
               <span style="font-size: 0.75rem; background: rgba(76, 175, 80, 0.2); border: 1px solid #4caf50; color: #a5d6a7; padding: 0.2rem 0.5rem; border-radius: 12px; font-weight: bold;">
                 Owned by ${charOwner.displayName} (@${charOwner.username})
@@ -9580,6 +9833,20 @@ function renderHeroView(container) {
 
     <!-- Live Dice Check Result Banner -->
     <div id="hero-dice-result-banner" style="display: none; margin-bottom: 1rem;" class="bastion-turn-log"></div>
+
+    <!-- v2.0 Concentration Save Auto-Tracker Banner -->
+    ${activeHero.pendingConcentrationSave ? `
+      <div id="hero-concentration-banner" style="margin-bottom: 1rem; background: rgba(245, 158, 11, 0.16); border: 1px solid rgba(251, 191, 36, 0.6); border-radius: var(--radius-md); padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.6rem;">
+        <div>
+          <strong style="color: #fde047; font-size: 0.92rem;">🔮 CONCENTRATION CHECK REQUIRED — ${activeHero.pendingConcentrationSave.spell}</strong>
+          <div style="font-size: 0.78rem; color: var(--text-secondary);">Took ${activeHero.pendingConcentrationSave.damage} damage → Constitution Saving Throw <strong>DC ${activeHero.pendingConcentrationSave.dc}</strong></div>
+        </div>
+        <div style="display: flex; gap: 0.4rem;">
+          <button type="button" class="btn btn-sm btn-primary" id="btn-hero-roll-conc-save">🎲 Roll CON Save (DC ${activeHero.pendingConcentrationSave.dc})</button>
+          ${activeHero.inspiration ? `<button type="button" class="btn btn-sm" id="btn-hero-roll-conc-adv" style="border-color: #fde047; color: #fde047;">⭐ Roll w/ Inspiration</button>` : ''}
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Interactive 5.5e Death Saving Throws Banner (Active when at 0 HP) -->
     ${(activeHero.hpCurrent || 0) <= 0 ? `
@@ -10358,6 +10625,22 @@ function renderHeroView(container) {
     renderHeroView(container);
   });
 
+  // v2.0 Heroic Inspiration & Concentration Auto-Save Handlers
+  container.querySelector('#btn-hero-inspiration-pill')?.addEventListener('click', () => {
+    worldState.toggleCharacterInspiration(activeHero.id);
+    renderHeroView(container);
+  });
+  container.querySelector('#btn-hero-roll-conc-save')?.addEventListener('click', () => {
+    const res = worldState.rollConcentrationSave(activeHero.id, false);
+    if (res.success) alert(`Concentration Save (${res.spell}): Rolled ${res.total} vs DC ${res.dc} → ${res.passed ? 'MAINTAINED!' : 'CONCENTRATION LOST!'}`);
+    renderHeroView(container);
+  });
+  container.querySelector('#btn-hero-roll-conc-adv')?.addEventListener('click', () => {
+    const res = worldState.rollConcentrationSave(activeHero.id, true);
+    if (res.success) alert(`Concentration Save w/ Inspiration (${res.spell}): Rolled ${res.total} vs DC ${res.dc} → ${res.passed ? 'MAINTAINED!' : 'CONCENTRATION LOST!'}`);
+    renderHeroView(container);
+  });
+
   if (newJournalForm) {
     newJournalForm.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -11133,7 +11416,19 @@ function renderCombatView(container) {
           <button id="combat-end-btn" class="btn btn-sm" style="font-weight: bold; padding: 0.4rem 0.9rem; display: none; color: #fca5a5; border-color: rgba(239, 68, 68, 0.5);">
             End Combat
           </button>
+          ${isDm ? `<button id="combat-award-xp-btn" class="btn btn-sm" style="border-color: #fde047; color: #fde047;" title="Distribute Encounter XP & Gold to Party (Supabase)">🏆 Award XP</button>` : ''}
+          <button id="combat-dm-screen-btn" class="btn btn-sm" style="border-color: #38bdf8; color: #7dd3fc;" title="Open D&D 5.5e Quick Reference DM Screen">📖 5.5e DM Screen</button>
         </div>
+      </div>
+
+      <!-- v2.0 AoE Spell Templates Toolbar (Supabase Synced) -->
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.4rem 0.75rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); margin-bottom: 0.5rem; font-size: 0.75rem;">
+        <strong style="color: var(--text-gold);">🎯 AoE Spell Templates (Supabase):</strong>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="sphere" data-radius="20" data-color="rgba(239,68,68,0.34)" data-label="Fireball (20ft Sphere)" style="font-size: 0.7rem; padding: 2px 7px;">🔥 20ft Sphere</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="cone" data-radius="15" data-color="rgba(249,115,22,0.34)" data-label="Burning Hands (15ft Cone)" style="font-size: 0.7rem; padding: 2px 7px;">🌊 15ft Cone</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="line" data-radius="30" data-color="rgba(56,189,248,0.36)" data-label="Lightning Bolt (30ft Line)" style="font-size: 0.7rem; padding: 2px 7px;">⚡ 30ft Line</button>
+        <button type="button" class="btn btn-sm combat-aoe-btn" data-shape="cube" data-radius="20" data-color="rgba(168,85,247,0.34)" data-label="Thunderwave (20ft Cube)" style="font-size: 0.7rem; padding: 2px 7px;">🧊 20ft Cube</button>
+        <button type="button" class="btn btn-sm" id="combat-clear-aoe-btn" style="font-size: 0.7rem; padding: 2px 7px; border-color: #f87171; color: #fca5a5;">✕ Clear AoE</button>
       </div>
 
       <!-- 3-Column Tactical Layout -->
@@ -14053,6 +14348,39 @@ function initCombatEngine(container) {
       if (eff.life <= 0) cState.effects.splice(i, 1);
     }
 
+    // v2.0 AoE Spell Templates Overlay (Supabase Synced)
+    if (typeof worldState.getAoeTemplates === 'function') {
+      const templates = worldState.getAoeTemplates();
+      templates.forEach(t => {
+        const cx = (t.x + 0.5) * ts;
+        const cy = (t.y + 0.5) * ts;
+        const rPx = Math.max(ts, ((t.radiusFt || 20) / 5) * ts);
+        ctx.save();
+        ctx.fillStyle = t.color || 'rgba(239, 68, 68, 0.34)';
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (t.shape === 'cube') {
+          ctx.rect(cx - rPx / 2, cy - rPx / 2, rPx, rPx);
+        } else if (t.shape === 'line') {
+          ctx.rect(cx, cy - ts * 0.45, rPx, ts * 0.9);
+        } else if (t.shape === 'cone') {
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, rPx, -Math.PI / 6, Math.PI / 6);
+          ctx.closePath();
+        } else {
+          ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText(t.label || 'AoE', cx, cy - 4);
+        ctx.restore();
+      });
+    }
+
     // Fog of War Overlay (opaque for players, translucent for DM)
     const fogKeys = Object.keys(cState.fogOfWar || {});
     if (fogKeys.length > 0) {
@@ -14072,6 +14400,41 @@ function initCombatEngine(container) {
     animationFrameId = requestAnimationFrame(render);
   }
   animationFrameId = requestAnimationFrame(render);
+
+  // v2.0 AoE Templates, Encounter XP Distributor & 5.5e DM Screen Handlers
+  container.querySelectorAll('.combat-aoe-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const shape = btn.getAttribute('data-shape');
+      const radiusFt = parseInt(btn.getAttribute('data-radius'), 10) || 20;
+      const color = btn.getAttribute('data-color');
+      const label = btn.getAttribute('data-label');
+      await worldState.addAoeTemplate({ shape, radiusFt, x: 5, y: 5, color, label });
+      logMsg(`Placed AoE Template: ${label}`, 'system');
+    });
+  });
+
+  container.querySelector('#combat-clear-aoe-btn')?.addEventListener('click', async () => {
+    await worldState.clearAoeTemplates();
+    logMsg('Cleared all Battlemat AoE templates.', 'system');
+  });
+
+  container.querySelector('#combat-award-xp-btn')?.addEventListener('click', () => {
+    const xp = parseInt(prompt('Total Encounter XP to split across party:', '1200') || '0', 10);
+    const gp = parseInt(prompt('Total Gold Pieces (GP) loot to split:', '200') || '0', 10);
+    if (!xp && !gp) return;
+    const res = worldState.awardEncounterXp(xp, gp, 'Combat Victory');
+    if (res.success) {
+      alert(`Awarded +${res.xpEach} XP & +${res.gpEach} GP to each hero!${res.readyHeroes.length ? `\nReady to Level Up: ${res.readyHeroes.join(', ')}` : ''}`);
+    }
+  });
+
+  container.querySelector('#combat-dm-screen-btn')?.addEventListener('click', () => {
+    const ref = worldState.getDmScreenReference();
+    const dcLines = ref.dcTable.map(d => `${d.label}: DC ${d.dc}`).join(' | ');
+    const covLines = ref.coverRules.map(c => `${c.type}: ${c.bonus}`).join('\n');
+    const paceLines = ref.travelPace.map(p => `${p.pace}: ${p.milesPerDay} mi/day (${p.effect})`).join('\n');
+    alert(`📖 D&D 5.5e (2024) DM QUICK SCREEN\n\n[DC TABLE]\n${dcLines}\n\n[COVER]\n${covLines}\n\n[EXHAUSTION 2024]\n${ref.exhaustion2024}\n\n[TRAVEL PACE]\n${paceLines}`);
+  });
 
   // Expose controller on container and window for testing, automated verification and external integrations
   container._combatController = {
@@ -15190,7 +15553,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.9';
+    window.APP_VERSION = '2.0';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

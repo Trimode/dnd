@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '0.9';
+    this.version = '1.0';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -228,13 +228,13 @@ class WorldStateManager {
     this.notify();
   }
 
-  savePrefs() {
+  savePrefs(silent = false) {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs));
     } catch (e) {
       console.error('Failed to save preferences:', e);
     }
-    this.notify();
+    if (!silent) this.notify();
   }
 
   subscribe(listener) {
@@ -283,14 +283,14 @@ class WorldStateManager {
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
 
-      // 3. Subscribe to Supabase Realtime for live multiplayer updates
+      // 3. Subscribe to Supabase Realtime for targeted single-table live updates
       supabaseDb.subscribeRealtime(
         targetId,
-        async () => {
-          const fresh = await supabaseDb.loadCampaignData(targetId, null);
-          if (fresh) {
-            this.data = { ...this.data, ...fresh };
+        (patch) => {
+          if (patch && typeof patch === 'object') {
+            this.data = { ...this.data, ...patch };
             this.ensureDefaults();
+            supabaseDb.recordSnapshots(targetId, this.data);
             this.saveData(true);
           }
         },
@@ -318,7 +318,6 @@ class WorldStateManager {
       this.prefs.activeGameId = gameId;
       this.savePrefs();
       this.initCloud(gameId);
-      this.notify();
     }
   }
 
@@ -583,9 +582,8 @@ class WorldStateManager {
     }
 
     this.prefs.activeHeroId = charId;
+    this.savePrefs(true);
     this.saveData();
-    this.savePrefs();
-    this.notify();
 
     return newChar;
   }
@@ -722,6 +720,8 @@ class WorldStateManager {
 
   claimCharacter(userId, charId) {
     const user = (this.data.users || []).find(u => u.id === userId);
+    this.prefs.activeHeroId = charId;
+    this.savePrefs(true);
     if (user) {
       user.claimedCharId = charId;
       const char = (this.data.partyCharacters || []).find(c => c.id === charId);
@@ -729,9 +729,9 @@ class WorldStateManager {
         char.playerName = user.displayName;
       }
       this.saveData();
+    } else {
+      this.notify();
     }
-    this.prefs.activeHeroId = charId;
-    this.savePrefs();
   }
 
   setActiveHero(charId) {

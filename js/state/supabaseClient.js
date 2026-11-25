@@ -1,7 +1,6 @@
 /**
  * Supabase Database & Realtime Sync Client for The Bleeding Realms of Aetheria
- * Handles Postgres persistence (Hybrid Relational + JSONB), Campaign Password RPC,
- * Auto-seeding on first launch, and Supabase Realtime multiplayer sync.
+ * Optimized with per-table diff fingerprinting, parallel upserts, and targeted Realtime reloads.
  */
 
 const SUPABASE_URL = 'https://jpagabqwrfjnjlbsrxbe.supabase.co';
@@ -27,6 +26,8 @@ class SupabaseCampaignService {
     this.isSyncing = false;
     this.lastLocalWriteAt = 0;
     this.syncTimer = null;
+    this.realtimeTimers = {};
+    this.lastSyncedSnapshots = {}; // campaignId -> { sectionKey: serializedString }
     this.initClient();
   }
 
@@ -51,29 +52,59 @@ class SupabaseCampaignService {
     return !!this.client;
   }
 
+  getSnapshotMap(campaignId) {
+    if (!this.lastSyncedSnapshots[campaignId]) {
+      this.lastSyncedSnapshots[campaignId] = {};
+    }
+    return this.lastSyncedSnapshots[campaignId];
+  }
+
+  recordSnapshots(campaignId, worldData) {
+    if (!worldData) return;
+    const snap = this.getSnapshotMap(campaignId);
+    snap.campaignMeta = JSON.stringify({
+      partySettings: worldData.partySettings || {},
+      socialScene: worldData.socialScene || {},
+      metadata: worldData.metadata || {},
+      regionsCount: Array.isArray(worldData.regions) ? worldData.regions.length : 0
+    });
+    snap.users = JSON.stringify(worldData.users || []);
+    snap.partyCharacters = JSON.stringify(worldData.partyCharacters || []);
+    snap.journalEntries = JSON.stringify(worldData.journalEntries || []);
+    snap.socialMessages = JSON.stringify(worldData.socialMessages || []);
+    snap.diceRollLogs = JSON.stringify(worldData.diceRollLogs || []);
+    snap.pendingRollRequests = JSON.stringify(worldData.pendingRollRequests || []);
+    snap.combatState = JSON.stringify(worldData.combatState || null);
+    LORE_CATEGORIES.forEach(cat => {
+      if (worldData[cat] !== undefined) {
+        snap[`lore:${cat}`] = JSON.stringify(worldData[cat]);
+      }
+    });
+  }
+
   async fetchCampaigns() {
     if (!this.isAvailable()) return null;
-    const { data, error } = await this.client
-      .from('campaigns')
-      .select('id, name, short_name, subtitle, description, status, tag, system, regions_count, party_settings, social_scene, metadata')
-      .order('created_at', { ascending: true });
+    const [campRes, charRes] = await Promise.all([
+      this.client
+        .from('campaigns')
+        .select('id, name, short_name, subtitle, description, status, tag, system, regions_count, party_settings, social_scene, metadata')
+        .order('created_at', { ascending: true }),
+      this.client
+        .from('party_characters')
+        .select('campaign_id')
+    ]);
 
-    if (error) {
-      console.warn('[Supabase] fetchCampaigns error:', error.message);
+    if (campRes.error) {
+      console.warn('[Supabase] fetchCampaigns error:', campRes.error.message);
       return null;
     }
 
-    // Count party characters per campaign
-    const { data: charRows } = await this.client
-      .from('party_characters')
-      .select('campaign_id');
-
     const countByCampaign = {};
-    (charRows || []).forEach(r => {
+    (charRes.data || []).forEach(r => {
       countByCampaign[r.campaign_id] = (countByCampaign[r.campaign_id] || 0) + 1;
     });
 
-    return (data || []).map(row => ({
+    return (campRes.data || []).map(row => ({
       id: row.id,
       name: row.name,
       shortName: row.short_name,
@@ -363,11 +394,13 @@ class SupabaseCampaignService {
     const loreRows = loreRes.data || [];
     const charRows = charsRes.data || [];
 
-    // First-time launch for 'demo': seed the database from INITIAL_WORLD_DATA
+    // First-time launch: seed the database from INITIAL_WORLD_DATA
     if (loreRows.length === 0 && charRows.length === 0 && fallbackSeedData) {
       console.info(`[Supabase] Campaign '${campaignId}' is empty — seeding initial world data into Supabase...`);
-      await this.syncCampaignData(campaignId, fallbackSeedData);
-      return JSON.parse(JSON.stringify(fallbackSeedData));
+      await this.syncCampaignData(campaignId, fallbackSeedData, true);
+      const seeded = JSON.parse(JSON.stringify(fallbackSeedData));
+      this.recordSnapshots(campaignId, seeded);
+      return seeded;
     }
 
     const hydrated = fallbackSeedData ? JSON.parse(JSON.stringify(fallbackSeedData)) : {};
@@ -398,7 +431,60 @@ class SupabaseCampaignService {
       hydrated.combatState = combatRes.data.state;
     }
 
+    this.recordSnapshots(campaignId, hydrated);
     return hydrated;
+  }
+
+  // Targeted single-table reload for Realtime updates (avoids re-fetching unchanged lore)
+  async loadTableSlice(campaignId, tableName) {
+    if (!this.isAvailable()) return null;
+    switch (tableName) {
+      case 'campaigns': {
+        const { data } = await this.client.from('campaigns').select('party_settings, social_scene, metadata').eq('id', campaignId).maybeSingle();
+        if (!data) return null;
+        return {
+          partySettings: data.party_settings || {},
+          socialScene: data.social_scene || {},
+          metadata: data.metadata || {}
+        };
+      }
+      case 'player_accounts': {
+        const { data } = await this.client.from('player_accounts').select('*').eq('campaign_id', campaignId);
+        return { users: (data || []).map(r => this.mapUserFromDb(r)) };
+      }
+      case 'party_characters': {
+        const { data } = await this.client.from('party_characters').select('*').eq('campaign_id', campaignId).order('created_at', { ascending: true });
+        return { partyCharacters: (data || []).map(r => this.mapCharacterFromDb(r)) };
+      }
+      case 'journal_entries': {
+        const { data } = await this.client.from('journal_entries').select('*').eq('campaign_id', campaignId).order('created_at', { ascending: false });
+        return { journalEntries: (data || []).map(r => this.mapJournalFromDb(r)) };
+      }
+      case 'social_messages': {
+        const { data } = await this.client.from('social_messages').select('*').eq('campaign_id', campaignId).order('created_at', { ascending: true }).limit(100);
+        return { socialMessages: (data || []).map(r => this.mapMessageFromDb(r)) };
+      }
+      case 'dice_roll_logs': {
+        const { data } = await this.client.from('dice_roll_logs').select('*').eq('campaign_id', campaignId).order('created_at', { ascending: false }).limit(80);
+        return { diceRollLogs: (data || []).map(r => this.mapRollFromDb(r)) };
+      }
+      case 'pending_roll_requests': {
+        const { data } = await this.client.from('pending_roll_requests').select('*').eq('campaign_id', campaignId).order('created_at', { ascending: false }).limit(25);
+        return { pendingRollRequests: (data || []).map(r => this.mapRequestFromDb(r)) };
+      }
+      case 'campaign_lore': {
+        const { data } = await this.client.from('campaign_lore').select('*').eq('campaign_id', campaignId);
+        const patch = {};
+        (data || []).forEach(r => { patch[r.category] = r.payload; });
+        return patch;
+      }
+      case 'combat_sessions': {
+        const { data } = await this.client.from('combat_sessions').select('state').eq('campaign_id', campaignId).maybeSingle();
+        return data ? { combatState: data.state } : null;
+      }
+      default:
+        return null;
+    }
   }
 
   scheduleSync(campaignId, worldData, onStatusChange = null) {
@@ -408,127 +494,173 @@ class SupabaseCampaignService {
 
     this.syncTimer = setTimeout(async () => {
       try {
-        await this.syncCampaignData(campaignId, worldData);
+        await this.syncCampaignData(campaignId, worldData, false);
         if (onStatusChange) onStatusChange('live');
       } catch (err) {
         console.warn('[Supabase] Background sync failed:', err);
         if (onStatusChange) onStatusChange('error');
       }
-    }, 350);
+    }, 300);
   }
 
-  async syncCampaignData(campaignId, worldData) {
+  async syncCollectionWithDeletes(table, campaignId, rows) {
+    if (rows.length > 0) {
+      await this.client.from(table).upsert(rows, { onConflict: 'id' });
+    }
+    const { data: existing } = await this.client.from(table).select('id').eq('campaign_id', campaignId);
+    const keepIds = new Set(rows.map(r => r.id));
+    const deleteIds = (existing || []).map(r => r.id).filter(id => !keepIds.has(id));
+    if (deleteIds.length > 0) {
+      await this.client.from(table).delete().in('id', deleteIds);
+    }
+  }
+
+  async syncCampaignData(campaignId, worldData, forceFull = false) {
     if (!this.isAvailable() || !worldData) return false;
     this.isSyncing = true;
     this.lastLocalWriteAt = Date.now();
 
+    const snap = this.getSnapshotMap(campaignId);
+    const tasks = [];
+
     try {
-      // 1. Update campaign metadata / settings / socialScene
-      await this.client
-        .from('campaigns')
-        .update({
-          party_settings: worldData.partySettings || {},
-          social_scene: worldData.socialScene || {},
-          metadata: worldData.metadata || {},
-          regions_count: Array.isArray(worldData.regions) ? worldData.regions.length : 0,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', campaignId);
-
-      // 2. Sync Player Accounts (must precede party_characters due to owner_user_id FK)
-      const users = (worldData.users || []).map(u => this.mapUserToDb(u, campaignId));
-      if (users.length > 0) {
-        await this.client.from('player_accounts').upsert(users, { onConflict: 'id' });
-      }
-
-      // 3. Sync Party Characters (upsert + prune deleted)
-      const validUserIds = new Set(users.map(u => u.id));
-      const chars = (worldData.partyCharacters || []).map(c => {
-        const mapped = this.mapCharacterToDb(c, campaignId);
-        if (mapped.owner_user_id && !validUserIds.has(mapped.owner_user_id)) {
-          mapped.owner_user_id = null;
-        }
-        return mapped;
+      // 1. Campaign metadata / settings / socialScene (only if changed)
+      const metaJson = JSON.stringify({
+        partySettings: worldData.partySettings || {},
+        socialScene: worldData.socialScene || {},
+        metadata: worldData.metadata || {},
+        regionsCount: Array.isArray(worldData.regions) ? worldData.regions.length : 0
       });
-      if (chars.length > 0) {
-        await this.client.from('party_characters').upsert(chars, { onConflict: 'id' });
-      }
-      const { data: existingChars } = await this.client
-        .from('party_characters')
-        .select('id')
-        .eq('campaign_id', campaignId);
-      const keepCharIds = new Set(chars.map(c => c.id));
-      const deleteCharIds = (existingChars || []).map(r => r.id).filter(id => !keepCharIds.has(id));
-      if (deleteCharIds.length > 0) {
-        await this.client.from('party_characters').delete().in('id', deleteCharIds);
-      }
-
-      // 4. Sync Journal Entries
-      const journals = (worldData.journalEntries || []).map(j => this.mapJournalToDb(j, campaignId));
-      if (journals.length > 0) {
-        await this.client.from('journal_entries').upsert(journals, { onConflict: 'id' });
-      }
-      const { data: existingJournals } = await this.client
-        .from('journal_entries')
-        .select('id')
-        .eq('campaign_id', campaignId);
-      const keepJournalIds = new Set(journals.map(j => j.id));
-      const deleteJournalIds = (existingJournals || []).map(r => r.id).filter(id => !keepJournalIds.has(id));
-      if (deleteJournalIds.length > 0) {
-        await this.client.from('journal_entries').delete().in('id', deleteJournalIds);
+      if (forceFull || snap.campaignMeta !== metaJson) {
+        tasks.push(
+          this.client
+            .from('campaigns')
+            .update({
+              party_settings: worldData.partySettings || {},
+              social_scene: worldData.socialScene || {},
+              metadata: worldData.metadata || {},
+              regions_count: Array.isArray(worldData.regions) ? worldData.regions.length : 0,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', campaignId)
+            .then(() => { snap.campaignMeta = metaJson; })
+        );
       }
 
-      // 5. Sync Social Messages
-      const messages = (worldData.socialMessages || []).map(m => this.mapMessageToDb(m, campaignId));
-      if (messages.length > 0) {
-        await this.client.from('social_messages').upsert(messages, { onConflict: 'id' });
+      // 2. Player Accounts & Party Characters (respect FK order if both changed)
+      const usersJson = JSON.stringify(worldData.users || []);
+      const charsJson = JSON.stringify(worldData.partyCharacters || []);
+      const usersDirty = forceFull || snap.users !== usersJson;
+      const charsDirty = forceFull || snap.partyCharacters !== charsJson;
+
+      if (usersDirty || charsDirty) {
+        tasks.push((async () => {
+          const users = (worldData.users || []).map(u => this.mapUserToDb(u, campaignId));
+          if (usersDirty && users.length > 0) {
+            await this.client.from('player_accounts').upsert(users, { onConflict: 'id' });
+            snap.users = usersJson;
+          }
+          if (charsDirty) {
+            const validUserIds = new Set(users.map(u => u.id));
+            const chars = (worldData.partyCharacters || []).map(c => {
+              const mapped = this.mapCharacterToDb(c, campaignId);
+              if (mapped.owner_user_id && !validUserIds.has(mapped.owner_user_id)) {
+                mapped.owner_user_id = null;
+              }
+              return mapped;
+            });
+            await this.syncCollectionWithDeletes('party_characters', campaignId, chars);
+            snap.partyCharacters = charsJson;
+          }
+        })());
       }
 
-      // 6. Sync Dice Roll Logs
-      const rolls = (worldData.diceRollLogs || []).map(r => this.mapRollToDb(r, campaignId));
-      if (rolls.length > 0) {
-        await this.client.from('dice_roll_logs').upsert(rolls, { onConflict: 'id' });
-      } else {
-        await this.client.from('dice_roll_logs').delete().eq('campaign_id', campaignId);
+      // 3. Journal Entries (only if changed)
+      const journalsJson = JSON.stringify(worldData.journalEntries || []);
+      if (forceFull || snap.journalEntries !== journalsJson) {
+        const journals = (worldData.journalEntries || []).map(j => this.mapJournalToDb(j, campaignId));
+        tasks.push(
+          this.syncCollectionWithDeletes('journal_entries', campaignId, journals)
+            .then(() => { snap.journalEntries = journalsJson; })
+        );
       }
 
-      // 7. Sync Pending Roll Requests
-      const reqs = (worldData.pendingRollRequests || []).map(r => this.mapRequestToDb(r, campaignId));
-      if (reqs.length > 0) {
-        await this.client.from('pending_roll_requests').upsert(reqs, { onConflict: 'id' });
-      }
-      const { data: existingReqs } = await this.client
-        .from('pending_roll_requests')
-        .select('id')
-        .eq('campaign_id', campaignId);
-      const keepReqIds = new Set(reqs.map(r => r.id));
-      const deleteReqIds = (existingReqs || []).map(r => r.id).filter(id => !keepReqIds.has(id));
-      if (deleteReqIds.length > 0) {
-        await this.client.from('pending_roll_requests').delete().in('id', deleteReqIds);
+      // 4. Social Messages (only if changed)
+      const msgsJson = JSON.stringify(worldData.socialMessages || []);
+      if (forceFull || snap.socialMessages !== msgsJson) {
+        const messages = (worldData.socialMessages || []).map(m => this.mapMessageToDb(m, campaignId));
+        if (messages.length > 0) {
+          tasks.push(
+            this.client.from('social_messages').upsert(messages, { onConflict: 'id' })
+              .then(() => { snap.socialMessages = msgsJson; })
+          );
+        }
       }
 
-      // 8. Sync Hybrid JSONB Lore Categories
-      const loreRows = LORE_CATEGORIES
-        .filter(cat => worldData[cat] !== undefined)
-        .map(cat => ({
-          campaign_id: campaignId,
-          category: cat,
-          payload: worldData[cat],
-          updated_at: new Date().toISOString()
-        }));
-      if (loreRows.length > 0) {
-        await this.client.from('campaign_lore').upsert(loreRows, { onConflict: 'campaign_id,category' });
+      // 5. Dice Roll Logs (only if changed)
+      const rollsJson = JSON.stringify(worldData.diceRollLogs || []);
+      if (forceFull || snap.diceRollLogs !== rollsJson) {
+        const rolls = (worldData.diceRollLogs || []).map(r => this.mapRollToDb(r, campaignId));
+        tasks.push(
+          (rolls.length > 0
+            ? this.client.from('dice_roll_logs').upsert(rolls, { onConflict: 'id' })
+            : this.client.from('dice_roll_logs').delete().eq('campaign_id', campaignId)
+          ).then(() => { snap.diceRollLogs = rollsJson; })
+        );
       }
 
-      // 9. Sync Combat Session if present
-      if (worldData.combatState) {
-        await this.client.from('combat_sessions').upsert({
-          campaign_id: campaignId,
-          state: worldData.combatState,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'campaign_id' });
+      // 6. Pending Roll Requests (only if changed)
+      const reqsJson = JSON.stringify(worldData.pendingRollRequests || []);
+      if (forceFull || snap.pendingRollRequests !== reqsJson) {
+        const reqs = (worldData.pendingRollRequests || []).map(r => this.mapRequestToDb(r, campaignId));
+        tasks.push(
+          this.syncCollectionWithDeletes('pending_roll_requests', campaignId, reqs)
+            .then(() => { snap.pendingRollRequests = reqsJson; })
+        );
       }
 
+      // 7. Hybrid JSONB Lore Categories (only dirty categories!)
+      const dirtyLoreRows = [];
+      const dirtyLoreSnaps = [];
+      LORE_CATEGORIES.forEach(cat => {
+        if (worldData[cat] !== undefined) {
+          const catJson = JSON.stringify(worldData[cat]);
+          if (forceFull || snap[`lore:${cat}`] !== catJson) {
+            dirtyLoreRows.push({
+              campaign_id: campaignId,
+              category: cat,
+              payload: worldData[cat],
+              updated_at: new Date().toISOString()
+            });
+            dirtyLoreSnaps.push([`lore:${cat}`, catJson]);
+          }
+        }
+      });
+      if (dirtyLoreRows.length > 0) {
+        tasks.push(
+          this.client.from('campaign_lore').upsert(dirtyLoreRows, { onConflict: 'campaign_id,category' })
+            .then(() => {
+              dirtyLoreSnaps.forEach(([k, v]) => { snap[k] = v; });
+            })
+        );
+      }
+
+      // 8. Combat Session (only if changed)
+      const combatJson = JSON.stringify(worldData.combatState || null);
+      if (worldData.combatState && (forceFull || snap.combatState !== combatJson)) {
+        tasks.push(
+          this.client.from('combat_sessions').upsert({
+            campaign_id: campaignId,
+            state: worldData.combatState,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'campaign_id' })
+            .then(() => { snap.combatState = combatJson; })
+        );
+      }
+
+      if (tasks.length > 0) {
+        await Promise.all(tasks);
+      }
       return true;
     } finally {
       this.isSyncing = false;
@@ -536,7 +668,7 @@ class SupabaseCampaignService {
     }
   }
 
-  subscribeRealtime(campaignId, onRemoteUpdate, onStatusChange = null) {
+  subscribeRealtime(campaignId, onTablePatch, onStatusChange = null) {
     if (!this.isAvailable()) return;
 
     if (this.realtimeChannel) {
@@ -547,12 +679,6 @@ class SupabaseCampaignService {
     }
 
     this.activeCampaignId = campaignId;
-
-    const handleChange = () => {
-      // Ignore echo events triggered by our own local write within the last 1.2s
-      if (this.isSyncing || (Date.now() - this.lastLocalWriteAt < 1200)) return;
-      if (onRemoteUpdate) onRemoteUpdate();
-    };
 
     const tables = [
       'campaigns',
@@ -572,7 +698,17 @@ class SupabaseCampaignService {
       channel = channel.on(
         'postgres_changes',
         { event: '*', schema: 'public', table, filter: `${filterCol}=eq.${campaignId}` },
-        handleChange
+        () => {
+          // Ignore echo events triggered by our own local write
+          if (this.isSyncing || (Date.now() - this.lastLocalWriteAt < 1200)) return;
+          if (this.realtimeTimers[table]) clearTimeout(this.realtimeTimers[table]);
+          this.realtimeTimers[table] = setTimeout(async () => {
+            const patch = await this.loadTableSlice(campaignId, table);
+            if (patch && onTablePatch) {
+              onTablePatch(patch);
+            }
+          }, 150);
+        }
       );
     });
 

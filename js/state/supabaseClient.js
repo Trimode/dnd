@@ -423,6 +423,62 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async saveWorldAtmosphere(campaignId, atmosphere) {
+    if (!this.isAvailable() || !atmosphere) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ world_atmosphere: atmosphere, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveShopInventory(campaignId, shopInventory) {
+    if (!this.isAvailable() || !Array.isArray(shopInventory)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ shop_inventory: shopInventory, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchCampaignQuests(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_quests')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      giver: r.giver || 'Unknown Patron',
+      description: r.description || '',
+      rewardGold: r.reward_gold || 0,
+      rewardXp: r.reward_xp || 0,
+      status: r.status || 'active',
+      objectives: Array.isArray(r.objectives) ? r.objectives : [],
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveCampaignQuest(campaignId, q) {
+    if (!this.isAvailable() || !q) return { success: false };
+    const { error } = await this.client.from('campaign_quests').upsert({
+      id: q.id,
+      campaign_id: campaignId || 'demo',
+      title: q.title,
+      giver: q.giver || 'Unknown Patron',
+      description: q.description || '',
+      reward_gold: Number(q.rewardGold) || 0,
+      reward_xp: Number(q.rewardXp) || 0,
+      status: q.status || 'active',
+      objectives: Array.isArray(q.objectives) ? q.objectives : [],
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {

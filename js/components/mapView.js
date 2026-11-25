@@ -19,6 +19,22 @@ export function renderMapView(container) {
           <button class="filter-chip" data-filter="Bastion">Strongholds & Bastions</button>
         </div>
         <div class="map-action-btns">
+          <div id="map-atmosphere-hud" style="display: inline-flex; align-items: center; gap: 0.4rem; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(212,175,55,0.4); border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; margin-right: 0.5rem;">
+            <span id="atmo-status-badge" style="color: #fde047; font-weight: bold;">☀️ Day • Clear</span>
+            <select id="atmo-time-select" class="editor-input" style="font-size: 0.72rem; padding: 1px 4px; width: auto;" title="Time of Day (DM Synced)">
+              <option value="Dawn">Dawn</option>
+              <option value="Day">Day</option>
+              <option value="Dusk">Dusk</option>
+              <option value="Midnight">Midnight</option>
+            </select>
+            <select id="atmo-weather-select" class="editor-input" style="font-size: 0.72rem; padding: 1px 4px; width: auto;" title="Weather (DM Synced)">
+              <option value="Clear">Clear</option>
+              <option value="Rain">Rain</option>
+              <option value="Blizzard">Blizzard</option>
+              <option value="Ash Storm">Ash Storm</option>
+              <option value="Arcane Tempest">Arcane Tempest</option>
+            </select>
+          </div>
           <span style="font-family: var(--font-sans); font-size: 0.75rem; color: var(--text-muted); align-self: center; margin-right: 0.5rem;">
             Scroll wheel to zoom • Drag to pan
           </span>
@@ -36,6 +52,9 @@ export function renderMapView(container) {
 
           <!-- Master Hand-Drawn Fantasy Map Illustration Background -->
           <image href="assets/world_map.jpg" x="0" y="0" width="1000" height="562" preserveAspectRatio="xMidYMid slice" />
+
+          <!-- Dynamic Atmosphere Tint Overlay (Time-of-Day & Weather Synced via Supabase) -->
+          <rect id="world-map-atmosphere-tint" x="0" y="0" width="1000" height="562" fill="#000000" fill-opacity="0" pointer-events="none" />
 
           <!-- Delicate Leyline Resonance Web (stroke-only, fill=none) -->
           <g stroke="#d4af37" stroke-width="1.5" stroke-dasharray="5,5" stroke-opacity="0.65" fill="none">
@@ -404,6 +423,55 @@ function initMapInteractivity(container) {
   container.querySelector('#zoom-reset-btn').addEventListener('click', resetMap);
   container.querySelector('#map-center-btn').addEventListener('click', resetMap);
 
+  // Weather & Time-of-Day Atmosphere Controller (DM Synced via Supabase)
+  const atmoBadge = container.querySelector('#atmo-status-badge');
+  const atmoTimeSel = container.querySelector('#atmo-time-select');
+  const atmoWeatherSel = container.querySelector('#atmo-weather-select');
+  const atmoTint = container.querySelector('#world-map-atmosphere-tint');
+
+  function applyAtmosphereUi() {
+    if (typeof worldState.getWorldAtmosphere !== 'function') return;
+    const atmo = worldState.getWorldAtmosphere();
+    const isDm = !!worldState.prefs.dmMode;
+    const timeIcons = { Dawn: '🌅', Day: '☀️', Dusk: '🌇', Midnight: '🌙' };
+    const weatherIcons = { Clear: '', Rain: '🌧️', Blizzard: '❄️', 'Ash Storm': '🌋', 'Arcane Tempest': '⚡' };
+    if (atmoBadge) {
+      atmoBadge.textContent = `${timeIcons[atmo.timeOfDay] || '☀️'} ${atmo.timeOfDay} • ${weatherIcons[atmo.weather] || ''} ${atmo.weather}`.trim();
+    }
+    if (atmoTimeSel) {
+      atmoTimeSel.value = atmo.timeOfDay || 'Day';
+      atmoTimeSel.style.display = isDm ? 'inline-block' : 'none';
+    }
+    if (atmoWeatherSel) {
+      atmoWeatherSel.value = atmo.weather || 'Clear';
+      atmoWeatherSel.style.display = isDm ? 'inline-block' : 'none';
+    }
+    if (atmoTint) {
+      const tintMap = {
+        Dawn: { fill: '#f59e0b', op: '0.14' },
+        Day: { fill: '#000000', op: '0' },
+        Dusk: { fill: '#ea580c', op: '0.20' },
+        Midnight: { fill: '#0f172a', op: '0.42' }
+      };
+      let t = tintMap[atmo.timeOfDay] || tintMap.Day;
+      if (atmo.weather === 'Arcane Tempest') t = { fill: '#6d28d9', op: '0.26' };
+      else if (atmo.weather === 'Blizzard') t = { fill: '#bae6fd', op: '0.22' };
+      else if (atmo.weather === 'Ash Storm') t = { fill: '#7f1d1d', op: '0.24' };
+      atmoTint.setAttribute('fill', t.fill);
+      atmoTint.setAttribute('fill-opacity', t.op);
+    }
+  }
+
+  atmoTimeSel?.addEventListener('change', async () => {
+    await worldState.setWorldAtmosphere({ timeOfDay: atmoTimeSel.value });
+    applyAtmosphereUi();
+  });
+  atmoWeatherSel?.addEventListener('change', async () => {
+    await worldState.setWorldAtmosphere({ weather: atmoWeatherSel.value });
+    applyAtmosphereUi();
+  });
+
   resetMap();
   renderPins();
+  applyAtmosphereUi();
 }

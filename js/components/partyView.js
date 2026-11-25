@@ -66,6 +66,22 @@ export function renderPartyView(container) {
       </div>
     </div>
 
+    <!-- Interactive Merchant Shop & Town Market (Supabase Synced) -->
+    <div style="background: var(--bg-card); border: 1px solid rgba(16,185,129,0.35); border-radius: var(--radius-md); padding: 0.9rem 1rem; margin-bottom: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem;">
+        <div>
+          <strong style="color: #6ee7b7; font-size: 0.95rem;">🏪 Town Market &amp; Merchant Shop (Supabase)</strong>
+          <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem;">Buy gear into your pack or sell items for 50% GP value</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <label for="shop-buyer-select" style="font-size: 0.75rem; color: var(--text-muted);">Buyer / Seller:</label>
+          <select id="shop-buyer-select" class="editor-input" style="font-size: 0.78rem; padding: 2px 6px; width: auto;"></select>
+          <span id="shop-buyer-gold" style="font-size: 0.8rem; font-weight: bold; color: var(--text-gold);"></span>
+        </div>
+      </div>
+      <div id="party-merchant-shop-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.55rem; font-size: 0.78rem;"></div>
+    </div>
+
     <!-- Character Cards Grid -->
     <div class="party-grid" id="party-characters-grid"></div>
 
@@ -713,6 +729,73 @@ export function renderPartyView(container) {
     }
   }
   renderLootAndRecaps();
+
+  // Interactive Merchant Shop & Town Market (Supabase Synced)
+  const buyerSelect = container.querySelector('#shop-buyer-select');
+  const buyerGoldEl = container.querySelector('#shop-buyer-gold');
+  const shopListEl = container.querySelector('#party-merchant-shop-list');
+
+  function populateBuyerSelect() {
+    if (!buyerSelect) return;
+    const prev = buyerSelect.value;
+    const chars = worldState.data.partyCharacters || [];
+    const activeHero = worldState.getActiveHero ? worldState.getActiveHero() : chars[0];
+    buyerSelect.innerHTML = chars.length
+      ? chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+      : `<option value="">No Hero Available</option>`;
+    if (prev && chars.some(c => c.id === prev)) {
+      buyerSelect.value = prev;
+    } else if (activeHero) {
+      buyerSelect.value = activeHero.id;
+    }
+  }
+
+  function renderMerchantShop() {
+    if (!shopListEl || typeof worldState.getShopInventory !== 'function') return;
+    populateBuyerSelect();
+    const chars = worldState.data.partyCharacters || [];
+    const selectedHero = chars.find(c => c.id === buyerSelect?.value) || chars[0];
+    const heroGp = selectedHero?.currency?.gp ?? 0;
+    if (buyerGoldEl) {
+      buyerGoldEl.textContent = selectedHero ? `💰 ${heroGp} GP` : '';
+    }
+
+    const items = worldState.getShopInventory();
+    shopListEl.innerHTML = items.map((item, idx) => {
+      const outOfStock = (item.stock ?? 0) <= 0;
+      const canAfford = selectedHero && heroGp >= (item.priceGp || 0);
+      return `
+        <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; display: flex; flex-direction: column; justify-content: space-between; gap: 0.35rem;">
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.3rem;">
+              <strong style="color: var(--text-primary);">${item.name}</strong>
+              <span style="color: var(--text-gold); font-weight: bold;">${item.priceGp} GP</span>
+            </div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+              ${item.category || 'gear'} • Stock: <strong>${item.stock ?? 0}</strong>${item.notes ? ` • ${item.notes}` : ''}
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm shop-buy-btn" data-idx="${idx}" ${outOfStock || !canAfford ? 'disabled' : ''} style="font-size: 0.72rem; padding: 3px 8px; border-color: #10b981; color: #6ee7b7; ${outOfStock || !canAfford ? 'opacity: 0.45; cursor: not-allowed;' : ''}">
+            ${outOfStock ? 'Sold Out' : `Buy (${item.priceGp} GP)`}
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    shopListEl.querySelectorAll('.shop-buy-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!selectedHero) return;
+        const idx = parseInt(btn.getAttribute('data-idx'), 10);
+        const res = await worldState.buyShopItem(selectedHero.id, idx);
+        if (!res.success && res.error) alert(res.error);
+        soundEngine.playDiceRoll(true);
+        renderMerchantShop();
+      });
+    });
+  }
+
+  buyerSelect?.addEventListener('change', renderMerchantShop);
+  renderMerchantShop();
 
   container.querySelector('#party-drop-loot-btn')?.addEventListener('click', async () => {
     const title = prompt('Treasure Chest Name:', 'Goblin Vault Hoard');

@@ -490,6 +490,31 @@ export function renderHeroView(container) {
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
 
+          <!-- Interactive 18 D&D 5.5e Skills Matrix (Proficiency & Expertise) -->
+          <details style="margin-top: 1rem; background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;" open>
+            <summary style="cursor: pointer; font-weight: bold; color: var(--text-gold); font-size: 0.85rem;">
+              🎯 5.5e Skills Matrix (18 Skills — Click dot for Prof/Exp, Click name to Roll)
+            </summary>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 0.3rem; margin-top: 0.6rem;">
+              ${(worldState.getDnd55eSkills ? worldState.getDnd55eSkills() : []).map(sk => {
+                const rank = (activeHero.skillProficiencies && activeHero.skillProficiencies[sk.name]) || 0;
+                const bonus = worldState.getSkillBonus ? worldState.getSkillBonus(activeHero, sk.name) : 0;
+                const fmtB = bonus >= 0 ? `+${bonus}` : `${bonus}`;
+                const badge = rank === 2 ? '★' : (rank === 1 ? '●' : '○');
+                const col = rank === 2 ? '#fde047' : (rank === 1 ? '#86efac' : '#64748b');
+                return `
+                  <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 3px 6px; font-size: 0.74rem;">
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                      <button type="button" class="hero-skill-prof-btn" data-skill="${sk.name}" title="Cycle: None / Proficient / Expertise" style="background:none;border:none;cursor:pointer;color:${col};font-size:0.85rem;padding:0;">${badge}</button>
+                      <button type="button" class="hero-skill-roll-btn" data-skill="${sk.name}" style="background:none;border:none;cursor:pointer;color:var(--text-primary);padding:0;text-align:left;">${sk.name}</button>
+                    </div>
+                    <strong style="color: ${bonus >= 0 ? '#86efac' : '#fca5a5'}; font-family: var(--font-mono);">${fmtB}</strong>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </details>
+
           <!-- DM Handouts & Secret Clues Drawer (Supabase) -->
           ${(worldState.getHandouts && worldState.getHandouts(activeHero.id).length > 0) ? `
             <div style="margin-top: 1rem; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: var(--radius-md); padding: 0.75rem;">
@@ -742,6 +767,25 @@ export function renderHeroView(container) {
   container.querySelector('#btn-hero-stabilize')?.addEventListener('click', () => {
     worldState.stabilizeCharacter(activeHero.id);
     renderHeroView(container);
+  });
+
+  // 18 Skills Matrix Handlers
+  container.querySelectorAll('.hero-skill-prof-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      worldState.toggleSkillProficiency(activeHero.id, btn.getAttribute('data-skill'));
+      renderHeroView(container);
+    });
+  });
+  container.querySelectorAll('.hero-skill-roll-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sk = btn.getAttribute('data-skill');
+      const r = worldState.rollSkillCheck(activeHero.id, sk);
+      if (r && diceResultBanner) {
+        try { soundEngine.playDiceRoll(r.d20 === 20); } catch (_) {}
+        diceResultBanner.style.display = 'block';
+        diceResultBanner.innerHTML = `🎯 <strong>${activeHero.name}</strong> rolled <strong>${sk}</strong>: <code>1d20 (${r.d20}) ${r.bonus >= 0 ? '+' : '-'} ${Math.abs(r.bonus)}</code> = <strong style="color:var(--text-gold);font-size:1.1rem;">${r.total}</strong>`;
+      }
+    });
   });
 
   // Rest Controls

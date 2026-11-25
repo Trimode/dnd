@@ -9,12 +9,19 @@ export function renderQuestView(container) {
   container.innerHTML = `
     <div class="view-header">
       <div>
-        <h2>Notice Board, Tavern Rumors & Mysteries</h2>
-        <div class="view-tagline">Bounties, Whispers from the Slagfields, and Ancient Prophecies</div>
+        <h2>Notice Board, Active Quest Log &amp; Tavern Rumors</h2>
+        <div class="view-tagline">Supabase-Synced Party Quests, Checkable Objectives, Bounties &amp; Mysteries</div>
       </div>
-      <div>
-        <button class="btn btn-primary" id="add-rumor-btn">Post New Rumor</button>
+      <div style="display: flex; gap: 0.5rem;">
+        ${prefs.dmMode ? `<button class="btn btn-primary" id="add-active-quest-btn">+ New Party Quest</button>` : ''}
+        <button class="btn" id="add-rumor-btn">Post New Rumor</button>
       </div>
+    </div>
+
+    <!-- Live Party Quest Board (Supabase Synced) -->
+    <div id="active-quest-board-panel" style="margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid rgba(212,175,55,0.4); border-radius: var(--radius-md); padding: 1rem;">
+      <strong style="color: var(--text-gold); font-size: 0.95rem;">📋 Active Party Quest Board (Supabase Live)</strong>
+      <div id="active-quests-list" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.65rem;"></div>
     </div>
 
     <div class="cards-grid" id="quests-cards-container" style="padding-top: 1rem;">
@@ -154,4 +161,54 @@ export function renderQuestView(container) {
   });
 
   renderCards();
+
+  // Render Live Party Quest Board (Supabase)
+  function renderQuestBoard() {
+    const list = container.querySelector('#active-quests-list');
+    if (!list) return;
+    const quests = worldState.getQuests ? worldState.getQuests() : [];
+    if (quests.length === 0) {
+      list.innerHTML = `<div style="color: var(--text-muted); font-size: 0.82rem; font-style: italic;">No active quests pinned yet. DM can click "+ New Party Quest" to assign objectives &amp; rewards.</div>`;
+      return;
+    }
+    list.innerHTML = quests.map(q => `
+      <div style="background: var(--bg-tertiary); border: 1px solid ${q.status === 'completed' ? 'rgba(34,197,94,0.45)' : 'var(--border-subtle)'}; border-radius: var(--radius-sm); padding: 0.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+          <strong style="color: var(--text-gold);">${q.title}</strong>
+          <span style="font-size: 0.68rem; text-transform: uppercase; font-weight: 700; color: ${q.status === 'completed' ? '#86efac' : '#fde047'};">${q.status}</span>
+        </div>
+        <div style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 0.45rem;">${q.description || ''} <span style="color:var(--text-muted);">(${q.rewardGold} GP • ${q.rewardXp} XP)</span></div>
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+          ${(q.objectives || []).map((o, idx) => `
+            <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; cursor: pointer; text-decoration: ${o.done ? 'line-through' : 'none'}; color: ${o.done ? 'var(--text-muted)' : 'var(--text-primary)'};">
+              <input type="checkbox" class="quest-obj-chk" data-qid="${q.id}" data-idx="${idx}" ${o.done ? 'checked' : ''}>
+              <span>${o.text}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.quest-obj-chk').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        await worldState.toggleQuestObjective(chk.getAttribute('data-qid'), parseInt(chk.getAttribute('data-idx'), 10));
+        renderQuestBoard();
+      });
+    });
+  }
+  renderQuestBoard();
+
+  container.querySelector('#add-active-quest-btn')?.addEventListener('click', async () => {
+    const title = prompt('Quest Title:', 'Seal the Ebonflame Rift');
+    if (!title) return;
+    const objRaw = prompt('Objectives (comma-separated):', 'Locate the Rift Anchor, Defeat the Ash Warden, Close the Tear') || 'Complete primary objective';
+    const rewardGold = parseInt(prompt('Gold Reward (GP):', '400') || '400', 10);
+    await worldState.createQuest({
+      title,
+      rewardGold,
+      rewardXp: 1000,
+      objectives: objRaw.split(',').map(s => s.trim()).filter(Boolean)
+    });
+    renderQuestBoard();
+  });
 }

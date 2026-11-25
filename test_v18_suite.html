@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v1.8 Tests: Merchant Shop, Weather/Time, 18 Skills Matrix & Quest Board</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.8"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. 18 D&D 5.5e Skills Matrix (Proficiency, Expertise & Roll)
+        const skills = worldState.getDnd55eSkills();
+        assert(skills.length === 18, "All 18 official D&D 5.5e skills defined");
+
+        const hero = worldState.createPartyCharacter({
+          name: 'Kaelen Swiftfoot',
+          level: 5, // PB = +3
+          species: 'Elf',
+          classRole: 'Rogue',
+          hitDie: 8,
+          hpMax: 38,
+          stats: { str: 10, dex: 16, con: 14, int: 12, wis: 14, cha: 10 } // DEX +3, WIS +2
+        });
+        assert(worldState.getSkillBonus(hero, 'Stealth') === 3, "Untrained Stealth bonus = +3 (DEX mod)");
+        worldState.toggleSkillProficiency(hero.id, 'Stealth'); // Proficient (+3 PB -> +6)
+        assert(worldState.getSkillBonus(hero, 'Stealth') === 6, "Proficient Stealth bonus = +6 (DEX +3 + PB +3)");
+        worldState.toggleSkillProficiency(hero.id, 'Stealth'); // Expertise (+6 PB -> +9)
+        assert(worldState.getSkillBonus(hero, 'Stealth') === 9, "Expertise Stealth bonus = +9 (DEX +3 + 2xPB +6)");
+
+        worldState.toggleSkillProficiency(hero.id, 'Perception'); // WIS +2 + PB +3 = +5 -> Passive 15
+        assert(hero.passivePerception === 15, "Toggling Perception proficiency updates Passive Perception to 15");
+
+        const skRoll = worldState.rollSkillCheck(hero.id, 'Stealth');
+        assert(skRoll && skRoll.total === skRoll.d20 + 9, "Skill roll calculates d20 + 9 accurately");
+
+        // 2. Town Market & Merchant Shop (Buy & Sell)
+        hero.currency = { gp: 100, sp: 0, cp: 0 };
+        const shop = worldState.getShopInventory();
+        assert(shop.length >= 6, "Town Market loaded with " + shop.length + " priced items");
+        const buyRes = await worldState.buyShopItem(hero.id, 0); // Potion of Healing 50 GP
+        assert(buyRes.success && hero.currency.gp === 50, "Buying 50 GP item deducts gold to 50 GP");
+        assert(hero.inventoryItems.some(i => i.name === 'Potion of Healing'), "Purchased item added directly to hero inventory");
+
+        const boughtItem = hero.inventoryItems.find(i => i.name === 'Potion of Healing');
+        const sellRes = worldState.sellInventoryItem(hero.id, boughtItem.id, 50);
+        assert(sellRes.success && sellRes.creditedGp === 25 && hero.currency.gp === 75, "Selling item credits 50% value (+25 GP -> 75 GP)");
+
+        // 3. Weather & Time-of-Day Controller
+        const atmo = await worldState.setWorldAtmosphere({ timeOfDay: 'Midnight', weather: 'Arcane Tempest', dayCount: 4 });
+        assert(atmo.timeOfDay === 'Midnight' && atmo.weather === 'Arcane Tempest', "World atmosphere updated to Midnight • Arcane Tempest");
+
+        // 4. Live Party Quest Board (Create & Toggle Objectives -> Auto-Complete)
+        const qRes = await worldState.createQuest({
+          title: 'Reclaim the Frost Spire',
+          giver: 'Archmage Vaelen',
+          rewardGold: 500,
+          rewardXp: 1200,
+          objectives: ['Cross the Rime Bridge', 'Defeat the Frost Warden']
+        });
+        assert(qRes.success && qRes.quest.status === 'active', "Active quest created on Party Quest Board");
+        await worldState.toggleQuestObjective(qRes.quest.id, 0);
+        assert(qRes.quest.objectives[0].done === true && qRes.quest.status === 'active', "Checking first objective keeps quest active");
+        await worldState.toggleQuestObjective(qRes.quest.id, 1);
+        assert(qRes.quest.status === 'completed', "Checking final objective automatically completes quest");
+
+        // 5. Verify v1.8 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.8', "Version indicator updated to v1.8");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V1.8 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

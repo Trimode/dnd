@@ -1,4 +1,4 @@
-/**
+﻿/**
  * World State Management with Supabase Cloud Persistence, Realtime Sync & Local Cache
  */
 import { INITIAL_WORLD_DATA } from '../data/worldData.js';
@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.7';
+    this.version = '1.8';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -276,13 +276,14 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
         supabaseDb.fetchSessionRecaps(targetId),
-        supabaseDb.fetchCampaignHandouts(targetId)
+        supabaseDb.fetchCampaignHandouts(targetId),
+        supabaseDb.fetchCampaignQuests(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -291,6 +292,7 @@ class WorldStateManager {
         if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
+        if (Array.isArray(remoteQuests)) this.data.campaignQuests = remoteQuests;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -1005,6 +1007,191 @@ class WorldStateManager {
       <div class="sec"><strong>5.5e Weapon Masteries:</strong> ${(c.weaponMasteries || []).join(', ') || 'None'}</div>
       <div class="sec"><strong>Equipment:</strong> ${(c.inventoryItems || []).map(i => `${i.name}${i.equipped ? ' [Equipped]' : ''}`).join(', ') || (c.equipment || []).join(', ') || 'Standard Pack'}</div>
       </body></html>`;
+  }
+
+  // ==========================================
+  // 18 D&D 5.5e SKILLS MATRIX (PROFICIENCY & EXPERTISE)
+  // ==========================================
+  getDnd55eSkills() {
+    return [
+      { name: 'Acrobatics', stat: 'dex' }, { name: 'Animal Handling', stat: 'wis' },
+      { name: 'Arcana', stat: 'int' }, { name: 'Athletics', stat: 'str' },
+      { name: 'Deception', stat: 'cha' }, { name: 'History', stat: 'int' },
+      { name: 'Insight', stat: 'wis' }, { name: 'Intimidation', stat: 'cha' },
+      { name: 'Investigation', stat: 'int' }, { name: 'Medicine', stat: 'wis' },
+      { name: 'Nature', stat: 'int' }, { name: 'Perception', stat: 'wis' },
+      { name: 'Performance', stat: 'cha' }, { name: 'Persuasion', stat: 'cha' },
+      { name: 'Religion', stat: 'int' }, { name: 'Sleight of Hand', stat: 'dex' },
+      { name: 'Stealth', stat: 'dex' }, { name: 'Survival', stat: 'wis' }
+    ];
+  }
+
+  getSkillBonus(char, skillName) {
+    const def = this.getDnd55eSkills().find(s => s.name === skillName);
+    if (!char || !def) return 0;
+    const baseMod = Math.floor(((parseInt(char.stats?.[def.stat], 10) || 10) - 10) / 2);
+    const pb = Math.ceil((parseInt(char.level, 10) || 1) / 4) + 1;
+    const rank = (char.skillProficiencies && char.skillProficiencies[skillName]) || 0; // 0=none, 1=prof, 2=expertise
+    return baseMod + (rank * pb);
+  }
+
+  toggleSkillProficiency(charId, skillName) {
+    if (!this.canControlCharacter(charId)) return 0;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return 0;
+    if (!char.skillProficiencies) char.skillProficiencies = {};
+    const next = ((char.skillProficiencies[skillName] || 0) + 1) % 3;
+    char.skillProficiencies[skillName] = next;
+    if (skillName === 'Perception') {
+      char.passivePerception = 10 + this.getSkillBonus(char, 'Perception');
+    } else if (skillName === 'Insight') {
+      char.passiveInsight = 10 + this.getSkillBonus(char, 'Insight');
+    }
+    this.saveData();
+    return next;
+  }
+
+  rollSkillCheck(charId, skillName) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    const bonus = this.getSkillBonus(char, skillName);
+    const d20 = Math.floor(Math.random() * 20) + 1;
+    const total = d20 + bonus;
+    const entry = this.logDiceRoll({
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '🎯',
+      rollType: 'check',
+      label: `${skillName} Check`,
+      formula: `1d20 (${d20}) ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+      d20Result: d20,
+      total
+    });
+    return { d20, bonus, total, entry };
+  }
+
+  // ==========================================
+  // TOWN MARKET & MERCHANT SHOP (SUPABASE)
+  // ==========================================
+  getShopInventory() {
+    if (!Array.isArray(this.data.shopInventory) || this.data.shopInventory.length === 0) {
+      this.data.shopInventory = [
+        { name: 'Potion of Healing', category: 'potion', healDice: '2d4+2', priceGp: 50, stock: 6, notes: 'Regain 2d4+2 HP' },
+        { name: 'Potion of Greater Healing', category: 'potion', healDice: '4d4+4', priceGp: 150, stock: 2, notes: 'Regain 4d4+4 HP' },
+        { name: 'Longsword', category: 'weapon', damage: '1d8', damageType: 'slashing', mastery: 'Sap', priceGp: 15, stock: 4, notes: 'Versatile (1d10)' },
+        { name: 'Longbow', category: 'weapon', damage: '1d8', damageType: 'piercing', mastery: 'Slow', priceGp: 50, stock: 3, notes: 'Range 150/600' },
+        { name: 'Studded Leather', category: 'armor', armorType: 'light', baseAc: 12, maxDex: 99, priceGp: 45, stock: 3, notes: 'AC 12 + DEX' },
+        { name: 'Shield', category: 'shield', acBonus: 2, priceGp: 10, stock: 5, notes: '+2 AC' },
+        { name: 'Half Plate', category: 'armor', armorType: 'medium', baseAc: 15, maxDex: 2, priceGp: 750, stock: 1, notes: 'AC 15 + DEX (max 2)' },
+        { name: 'Cloak of Protection', category: 'magic', acBonus: 1, requiresAttunement: true, priceGp: 500, stock: 1, notes: '+1 AC & Saves (Attunement)' }
+      ];
+    }
+    return this.data.shopInventory;
+  }
+
+  async buyShopItem(charId, itemIndex) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    const shop = this.getShopInventory();
+    const item = shop[itemIndex];
+    if (!char || !item) return { success: false, error: 'Item unavailable' };
+    if ((item.stock || 0) <= 0) return { success: false, error: 'Out of stock' };
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    if ((char.currency.gp || 0) < item.priceGp) {
+      return { success: false, error: `Not enough GP (need ${item.priceGp} GP, have ${char.currency.gp || 0} GP).` };
+    }
+    char.currency.gp -= item.priceGp;
+    item.stock -= 1;
+    this.addInventoryItem(char.id, { ...item, quantity: 1 });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveShopInventory(this.activeGameId || 'demo', shop);
+    }
+    return { success: true, item: item.name, remainingGp: char.currency.gp };
+  }
+
+  sellInventoryItem(charId, itemId, baseValueGp = 20) {
+    if (!this.canControlCharacter(charId)) return { success: false };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return { success: false };
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return { success: false };
+    const credit = Math.max(1, Math.floor((item.priceGp || baseValueGp) / 2));
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    char.currency.gp = (char.currency.gp || 0) + credit;
+    this.removeInventoryItem(char.id, itemId);
+    return { success: true, creditedGp: credit, newGp: char.currency.gp };
+  }
+
+  // ==========================================
+  // WEATHER, TIME-OF-DAY & ATMOSPHERE (SUPABASE)
+  // ==========================================
+  getWorldAtmosphere() {
+    if (!this.data.worldAtmosphere) {
+      this.data.worldAtmosphere = { timeOfDay: 'Day', weather: 'Clear', dayCount: 1 };
+    }
+    return this.data.worldAtmosphere;
+  }
+
+  async setWorldAtmosphere(updates = {}) {
+    const cur = this.getWorldAtmosphere();
+    this.data.worldAtmosphere = { ...cur, ...updates, updatedAt: Date.now() };
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveWorldAtmosphere(this.activeGameId || 'demo', this.data.worldAtmosphere);
+    }
+    this.saveData(true);
+    return this.data.worldAtmosphere;
+  }
+
+  // ==========================================
+  // LIVE PARTY QUEST BOARD (SUPABASE)
+  // ==========================================
+  getQuests() {
+    if (!Array.isArray(this.data.campaignQuests)) this.data.campaignQuests = [];
+    return this.data.campaignQuests;
+  }
+
+  async createQuest({ title, giver = 'Guildmaster', description = '', rewardGold = 250, rewardXp = 500, objectives = [] }) {
+    if (!Array.isArray(this.data.campaignQuests)) this.data.campaignQuests = [];
+    const quest = {
+      id: 'quest_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: (title || 'Untitled Quest').trim(),
+      giver: (giver || 'Unknown Patron').trim(),
+      description: (description || '').trim(),
+      rewardGold: Number(rewardGold) || 0,
+      rewardXp: Number(rewardXp) || 0,
+      status: 'active',
+      objectives: objectives.map(o => (typeof o === 'string' ? { text: o, done: false } : { text: o.text, done: !!o.done })),
+      createdAt: Date.now()
+    };
+    this.data.campaignQuests.unshift(quest);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', quest);
+    }
+    this.saveData(true);
+    return { success: true, quest };
+  }
+
+  async toggleQuestObjective(questId, objIndex) {
+    const q = this.getQuests().find(x => x.id === questId);
+    if (!q || !q.objectives[objIndex]) return false;
+    q.objectives[objIndex].done = !q.objectives[objIndex].done;
+    if (q.objectives.length > 0 && q.objectives.every(o => o.done)) {
+      q.status = 'completed';
+    }
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', q);
+    }
+    this.saveData(true);
+    return true;
+  }
+
+  async setQuestStatus(questId, status) {
+    const q = this.getQuests().find(x => x.id === questId);
+    if (!q) return false;
+    q.status = status;
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', q);
+    }
+    this.saveData(true);
+    return true;
   }
 
   notify() {

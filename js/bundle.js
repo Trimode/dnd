@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The Bleeding Realms of Aetheria - Consolidated Application Bundle (Clean 5.5e)
  */
 (function() {
@@ -1821,6 +1821,62 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async saveWorldAtmosphere(campaignId, atmosphere) {
+    if (!this.isAvailable() || !atmosphere) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ world_atmosphere: atmosphere, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveShopInventory(campaignId, shopInventory) {
+    if (!this.isAvailable() || !Array.isArray(shopInventory)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ shop_inventory: shopInventory, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchCampaignQuests(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_quests')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      giver: r.giver || 'Unknown Patron',
+      description: r.description || '',
+      rewardGold: r.reward_gold || 0,
+      rewardXp: r.reward_xp || 0,
+      status: r.status || 'active',
+      objectives: Array.isArray(r.objectives) ? r.objectives : [],
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveCampaignQuest(campaignId, q) {
+    if (!this.isAvailable() || !q) return { success: false };
+    const { error } = await this.client.from('campaign_quests').upsert({
+      id: q.id,
+      campaign_id: campaignId || 'demo',
+      title: q.title,
+      giver: q.giver || 'Unknown Patron',
+      description: q.description || '',
+      reward_gold: Number(q.rewardGold) || 0,
+      reward_xp: Number(q.rewardXp) || 0,
+      status: q.status || 'active',
+      objectives: Array.isArray(q.objectives) ? q.objectives : [],
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {
@@ -2445,7 +2501,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.7';
+    this.version = '1.8';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2712,13 +2768,14 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
         supabaseDb.fetchSessionRecaps(targetId),
-        supabaseDb.fetchCampaignHandouts(targetId)
+        supabaseDb.fetchCampaignHandouts(targetId),
+        supabaseDb.fetchCampaignQuests(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -2727,6 +2784,7 @@ class WorldStateManager {
         if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
+        if (Array.isArray(remoteQuests)) this.data.campaignQuests = remoteQuests;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -3441,6 +3499,191 @@ class WorldStateManager {
       <div class="sec"><strong>5.5e Weapon Masteries:</strong> ${(c.weaponMasteries || []).join(', ') || 'None'}</div>
       <div class="sec"><strong>Equipment:</strong> ${(c.inventoryItems || []).map(i => `${i.name}${i.equipped ? ' [Equipped]' : ''}`).join(', ') || (c.equipment || []).join(', ') || 'Standard Pack'}</div>
       </body></html>`;
+  }
+
+  // ==========================================
+  // 18 D&D 5.5e SKILLS MATRIX (PROFICIENCY & EXPERTISE)
+  // ==========================================
+  getDnd55eSkills() {
+    return [
+      { name: 'Acrobatics', stat: 'dex' }, { name: 'Animal Handling', stat: 'wis' },
+      { name: 'Arcana', stat: 'int' }, { name: 'Athletics', stat: 'str' },
+      { name: 'Deception', stat: 'cha' }, { name: 'History', stat: 'int' },
+      { name: 'Insight', stat: 'wis' }, { name: 'Intimidation', stat: 'cha' },
+      { name: 'Investigation', stat: 'int' }, { name: 'Medicine', stat: 'wis' },
+      { name: 'Nature', stat: 'int' }, { name: 'Perception', stat: 'wis' },
+      { name: 'Performance', stat: 'cha' }, { name: 'Persuasion', stat: 'cha' },
+      { name: 'Religion', stat: 'int' }, { name: 'Sleight of Hand', stat: 'dex' },
+      { name: 'Stealth', stat: 'dex' }, { name: 'Survival', stat: 'wis' }
+    ];
+  }
+
+  getSkillBonus(char, skillName) {
+    const def = this.getDnd55eSkills().find(s => s.name === skillName);
+    if (!char || !def) return 0;
+    const baseMod = Math.floor(((parseInt(char.stats?.[def.stat], 10) || 10) - 10) / 2);
+    const pb = Math.ceil((parseInt(char.level, 10) || 1) / 4) + 1;
+    const rank = (char.skillProficiencies && char.skillProficiencies[skillName]) || 0; // 0=none, 1=prof, 2=expertise
+    return baseMod + (rank * pb);
+  }
+
+  toggleSkillProficiency(charId, skillName) {
+    if (!this.canControlCharacter(charId)) return 0;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return 0;
+    if (!char.skillProficiencies) char.skillProficiencies = {};
+    const next = ((char.skillProficiencies[skillName] || 0) + 1) % 3;
+    char.skillProficiencies[skillName] = next;
+    if (skillName === 'Perception') {
+      char.passivePerception = 10 + this.getSkillBonus(char, 'Perception');
+    } else if (skillName === 'Insight') {
+      char.passiveInsight = 10 + this.getSkillBonus(char, 'Insight');
+    }
+    this.saveData();
+    return next;
+  }
+
+  rollSkillCheck(charId, skillName) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    const bonus = this.getSkillBonus(char, skillName);
+    const d20 = Math.floor(Math.random() * 20) + 1;
+    const total = d20 + bonus;
+    const entry = this.logDiceRoll({
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '🎯',
+      rollType: 'check',
+      label: `${skillName} Check`,
+      formula: `1d20 (${d20}) ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+      d20Result: d20,
+      total
+    });
+    return { d20, bonus, total, entry };
+  }
+
+  // ==========================================
+  // TOWN MARKET & MERCHANT SHOP (SUPABASE)
+  // ==========================================
+  getShopInventory() {
+    if (!Array.isArray(this.data.shopInventory) || this.data.shopInventory.length === 0) {
+      this.data.shopInventory = [
+        { name: 'Potion of Healing', category: 'potion', healDice: '2d4+2', priceGp: 50, stock: 6, notes: 'Regain 2d4+2 HP' },
+        { name: 'Potion of Greater Healing', category: 'potion', healDice: '4d4+4', priceGp: 150, stock: 2, notes: 'Regain 4d4+4 HP' },
+        { name: 'Longsword', category: 'weapon', damage: '1d8', damageType: 'slashing', mastery: 'Sap', priceGp: 15, stock: 4, notes: 'Versatile (1d10)' },
+        { name: 'Longbow', category: 'weapon', damage: '1d8', damageType: 'piercing', mastery: 'Slow', priceGp: 50, stock: 3, notes: 'Range 150/600' },
+        { name: 'Studded Leather', category: 'armor', armorType: 'light', baseAc: 12, maxDex: 99, priceGp: 45, stock: 3, notes: 'AC 12 + DEX' },
+        { name: 'Shield', category: 'shield', acBonus: 2, priceGp: 10, stock: 5, notes: '+2 AC' },
+        { name: 'Half Plate', category: 'armor', armorType: 'medium', baseAc: 15, maxDex: 2, priceGp: 750, stock: 1, notes: 'AC 15 + DEX (max 2)' },
+        { name: 'Cloak of Protection', category: 'magic', acBonus: 1, requiresAttunement: true, priceGp: 500, stock: 1, notes: '+1 AC & Saves (Attunement)' }
+      ];
+    }
+    return this.data.shopInventory;
+  }
+
+  async buyShopItem(charId, itemIndex) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    const shop = this.getShopInventory();
+    const item = shop[itemIndex];
+    if (!char || !item) return { success: false, error: 'Item unavailable' };
+    if ((item.stock || 0) <= 0) return { success: false, error: 'Out of stock' };
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    if ((char.currency.gp || 0) < item.priceGp) {
+      return { success: false, error: `Not enough GP (need ${item.priceGp} GP, have ${char.currency.gp || 0} GP).` };
+    }
+    char.currency.gp -= item.priceGp;
+    item.stock -= 1;
+    this.addInventoryItem(char.id, { ...item, quantity: 1 });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveShopInventory(this.activeGameId || 'demo', shop);
+    }
+    return { success: true, item: item.name, remainingGp: char.currency.gp };
+  }
+
+  sellInventoryItem(charId, itemId, baseValueGp = 20) {
+    if (!this.canControlCharacter(charId)) return { success: false };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return { success: false };
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return { success: false };
+    const credit = Math.max(1, Math.floor((item.priceGp || baseValueGp) / 2));
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    char.currency.gp = (char.currency.gp || 0) + credit;
+    this.removeInventoryItem(char.id, itemId);
+    return { success: true, creditedGp: credit, newGp: char.currency.gp };
+  }
+
+  // ==========================================
+  // WEATHER, TIME-OF-DAY & ATMOSPHERE (SUPABASE)
+  // ==========================================
+  getWorldAtmosphere() {
+    if (!this.data.worldAtmosphere) {
+      this.data.worldAtmosphere = { timeOfDay: 'Day', weather: 'Clear', dayCount: 1 };
+    }
+    return this.data.worldAtmosphere;
+  }
+
+  async setWorldAtmosphere(updates = {}) {
+    const cur = this.getWorldAtmosphere();
+    this.data.worldAtmosphere = { ...cur, ...updates, updatedAt: Date.now() };
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveWorldAtmosphere(this.activeGameId || 'demo', this.data.worldAtmosphere);
+    }
+    this.saveData(true);
+    return this.data.worldAtmosphere;
+  }
+
+  // ==========================================
+  // LIVE PARTY QUEST BOARD (SUPABASE)
+  // ==========================================
+  getQuests() {
+    if (!Array.isArray(this.data.campaignQuests)) this.data.campaignQuests = [];
+    return this.data.campaignQuests;
+  }
+
+  async createQuest({ title, giver = 'Guildmaster', description = '', rewardGold = 250, rewardXp = 500, objectives = [] }) {
+    if (!Array.isArray(this.data.campaignQuests)) this.data.campaignQuests = [];
+    const quest = {
+      id: 'quest_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: (title || 'Untitled Quest').trim(),
+      giver: (giver || 'Unknown Patron').trim(),
+      description: (description || '').trim(),
+      rewardGold: Number(rewardGold) || 0,
+      rewardXp: Number(rewardXp) || 0,
+      status: 'active',
+      objectives: objectives.map(o => (typeof o === 'string' ? { text: o, done: false } : { text: o.text, done: !!o.done })),
+      createdAt: Date.now()
+    };
+    this.data.campaignQuests.unshift(quest);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', quest);
+    }
+    this.saveData(true);
+    return { success: true, quest };
+  }
+
+  async toggleQuestObjective(questId, objIndex) {
+    const q = this.getQuests().find(x => x.id === questId);
+    if (!q || !q.objectives[objIndex]) return false;
+    q.objectives[objIndex].done = !q.objectives[objIndex].done;
+    if (q.objectives.length > 0 && q.objectives.every(o => o.done)) {
+      q.status = 'completed';
+    }
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', q);
+    }
+    this.saveData(true);
+    return true;
+  }
+
+  async setQuestStatus(questId, status) {
+    const q = this.getQuests().find(x => x.id === questId);
+    if (!q) return false;
+    q.status = status;
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignQuest(this.activeGameId || 'demo', q);
+    }
+    this.saveData(true);
+    return true;
   }
 
   notify() {
@@ -4577,6 +4820,22 @@ function renderMapView(container) {
           <button class="filter-chip" data-filter="Bastion">Strongholds & Bastions</button>
         </div>
         <div class="map-action-btns">
+          <div id="map-atmosphere-hud" style="display: inline-flex; align-items: center; gap: 0.4rem; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(212,175,55,0.4); border-radius: 6px; padding: 3px 8px; font-size: 0.75rem; margin-right: 0.5rem;">
+            <span id="atmo-status-badge" style="color: #fde047; font-weight: bold;">☀️ Day • Clear</span>
+            <select id="atmo-time-select" class="editor-input" style="font-size: 0.72rem; padding: 1px 4px; width: auto;" title="Time of Day (DM Synced)">
+              <option value="Dawn">Dawn</option>
+              <option value="Day">Day</option>
+              <option value="Dusk">Dusk</option>
+              <option value="Midnight">Midnight</option>
+            </select>
+            <select id="atmo-weather-select" class="editor-input" style="font-size: 0.72rem; padding: 1px 4px; width: auto;" title="Weather (DM Synced)">
+              <option value="Clear">Clear</option>
+              <option value="Rain">Rain</option>
+              <option value="Blizzard">Blizzard</option>
+              <option value="Ash Storm">Ash Storm</option>
+              <option value="Arcane Tempest">Arcane Tempest</option>
+            </select>
+          </div>
           <span style="font-family: var(--font-sans); font-size: 0.75rem; color: var(--text-muted); align-self: center; margin-right: 0.5rem;">
             Scroll wheel to zoom • Drag to pan
           </span>
@@ -4594,6 +4853,9 @@ function renderMapView(container) {
 
           <!-- Master Hand-Drawn Fantasy Map Illustration Background -->
           <image href="assets/world_map.jpg" x="0" y="0" width="1000" height="562" preserveAspectRatio="xMidYMid slice" />
+
+          <!-- Dynamic Atmosphere Tint Overlay (Time-of-Day & Weather Synced via Supabase) -->
+          <rect id="world-map-atmosphere-tint" x="0" y="0" width="1000" height="562" fill="#000000" fill-opacity="0" pointer-events="none" />
 
           <!-- Delicate Leyline Resonance Web (stroke-only, fill=none) -->
           <g stroke="#d4af37" stroke-width="1.5" stroke-dasharray="5,5" stroke-opacity="0.65" fill="none">
@@ -4962,8 +5224,57 @@ function initMapInteractivity(container) {
   container.querySelector('#zoom-reset-btn').addEventListener('click', resetMap);
   container.querySelector('#map-center-btn').addEventListener('click', resetMap);
 
+  // Weather & Time-of-Day Atmosphere Controller (DM Synced via Supabase)
+  const atmoBadge = container.querySelector('#atmo-status-badge');
+  const atmoTimeSel = container.querySelector('#atmo-time-select');
+  const atmoWeatherSel = container.querySelector('#atmo-weather-select');
+  const atmoTint = container.querySelector('#world-map-atmosphere-tint');
+
+  function applyAtmosphereUi() {
+    if (typeof worldState.getWorldAtmosphere !== 'function') return;
+    const atmo = worldState.getWorldAtmosphere();
+    const isDm = !!worldState.prefs.dmMode;
+    const timeIcons = { Dawn: '🌅', Day: '☀️', Dusk: '🌇', Midnight: '🌙' };
+    const weatherIcons = { Clear: '', Rain: '🌧️', Blizzard: '❄️', 'Ash Storm': '🌋', 'Arcane Tempest': '⚡' };
+    if (atmoBadge) {
+      atmoBadge.textContent = `${timeIcons[atmo.timeOfDay] || '☀️'} ${atmo.timeOfDay} • ${weatherIcons[atmo.weather] || ''} ${atmo.weather}`.trim();
+    }
+    if (atmoTimeSel) {
+      atmoTimeSel.value = atmo.timeOfDay || 'Day';
+      atmoTimeSel.style.display = isDm ? 'inline-block' : 'none';
+    }
+    if (atmoWeatherSel) {
+      atmoWeatherSel.value = atmo.weather || 'Clear';
+      atmoWeatherSel.style.display = isDm ? 'inline-block' : 'none';
+    }
+    if (atmoTint) {
+      const tintMap = {
+        Dawn: { fill: '#f59e0b', op: '0.14' },
+        Day: { fill: '#000000', op: '0' },
+        Dusk: { fill: '#ea580c', op: '0.20' },
+        Midnight: { fill: '#0f172a', op: '0.42' }
+      };
+      let t = tintMap[atmo.timeOfDay] || tintMap.Day;
+      if (atmo.weather === 'Arcane Tempest') t = { fill: '#6d28d9', op: '0.26' };
+      else if (atmo.weather === 'Blizzard') t = { fill: '#bae6fd', op: '0.22' };
+      else if (atmo.weather === 'Ash Storm') t = { fill: '#7f1d1d', op: '0.24' };
+      atmoTint.setAttribute('fill', t.fill);
+      atmoTint.setAttribute('fill-opacity', t.op);
+    }
+  }
+
+  atmoTimeSel?.addEventListener('change', async () => {
+    await worldState.setWorldAtmosphere({ timeOfDay: atmoTimeSel.value });
+    applyAtmosphereUi();
+  });
+  atmoWeatherSel?.addEventListener('change', async () => {
+    await worldState.setWorldAtmosphere({ weather: atmoWeatherSel.value });
+    applyAtmosphereUi();
+  });
+
   resetMap();
   renderPins();
+  applyAtmosphereUi();
 }
 
   // COMPONENT: characterView.js
@@ -5745,12 +6056,19 @@ function renderQuestView(container) {
   container.innerHTML = `
     <div class="view-header">
       <div>
-        <h2>Notice Board, Tavern Rumors & Mysteries</h2>
-        <div class="view-tagline">Bounties, Whispers from the Slagfields, and Ancient Prophecies</div>
+        <h2>Notice Board, Active Quest Log &amp; Tavern Rumors</h2>
+        <div class="view-tagline">Supabase-Synced Party Quests, Checkable Objectives, Bounties &amp; Mysteries</div>
       </div>
-      <div>
-        <button class="btn btn-primary" id="add-rumor-btn">Post New Rumor</button>
+      <div style="display: flex; gap: 0.5rem;">
+        ${prefs.dmMode ? `<button class="btn btn-primary" id="add-active-quest-btn">+ New Party Quest</button>` : ''}
+        <button class="btn" id="add-rumor-btn">Post New Rumor</button>
       </div>
+    </div>
+
+    <!-- Live Party Quest Board (Supabase Synced) -->
+    <div id="active-quest-board-panel" style="margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid rgba(212,175,55,0.4); border-radius: var(--radius-md); padding: 1rem;">
+      <strong style="color: var(--text-gold); font-size: 0.95rem;">📋 Active Party Quest Board (Supabase Live)</strong>
+      <div id="active-quests-list" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.65rem;"></div>
     </div>
 
     <div class="cards-grid" id="quests-cards-container" style="padding-top: 1rem;">
@@ -5890,6 +6208,56 @@ function renderQuestView(container) {
   });
 
   renderCards();
+
+  // Render Live Party Quest Board (Supabase)
+  function renderQuestBoard() {
+    const list = container.querySelector('#active-quests-list');
+    if (!list) return;
+    const quests = worldState.getQuests ? worldState.getQuests() : [];
+    if (quests.length === 0) {
+      list.innerHTML = `<div style="color: var(--text-muted); font-size: 0.82rem; font-style: italic;">No active quests pinned yet. DM can click "+ New Party Quest" to assign objectives &amp; rewards.</div>`;
+      return;
+    }
+    list.innerHTML = quests.map(q => `
+      <div style="background: var(--bg-tertiary); border: 1px solid ${q.status === 'completed' ? 'rgba(34,197,94,0.45)' : 'var(--border-subtle)'}; border-radius: var(--radius-sm); padding: 0.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+          <strong style="color: var(--text-gold);">${q.title}</strong>
+          <span style="font-size: 0.68rem; text-transform: uppercase; font-weight: 700; color: ${q.status === 'completed' ? '#86efac' : '#fde047'};">${q.status}</span>
+        </div>
+        <div style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 0.45rem;">${q.description || ''} <span style="color:var(--text-muted);">(${q.rewardGold} GP • ${q.rewardXp} XP)</span></div>
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+          ${(q.objectives || []).map((o, idx) => `
+            <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; cursor: pointer; text-decoration: ${o.done ? 'line-through' : 'none'}; color: ${o.done ? 'var(--text-muted)' : 'var(--text-primary)'};">
+              <input type="checkbox" class="quest-obj-chk" data-qid="${q.id}" data-idx="${idx}" ${o.done ? 'checked' : ''}>
+              <span>${o.text}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.quest-obj-chk').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        await worldState.toggleQuestObjective(chk.getAttribute('data-qid'), parseInt(chk.getAttribute('data-idx'), 10));
+        renderQuestBoard();
+      });
+    });
+  }
+  renderQuestBoard();
+
+  container.querySelector('#add-active-quest-btn')?.addEventListener('click', async () => {
+    const title = prompt('Quest Title:', 'Seal the Ebonflame Rift');
+    if (!title) return;
+    const objRaw = prompt('Objectives (comma-separated):', 'Locate the Rift Anchor, Defeat the Ash Warden, Close the Tear') || 'Complete primary objective';
+    const rewardGold = parseInt(prompt('Gold Reward (GP):', '400') || '400', 10);
+    await worldState.createQuest({
+      title,
+      rewardGold,
+      rewardXp: 1000,
+      objectives: objRaw.split(',').map(s => s.trim()).filter(Boolean)
+    });
+    renderQuestBoard();
+  });
 }
 
   // COMPONENT: pantheonView.js
@@ -7574,6 +7942,22 @@ function renderPartyView(container) {
       </div>
     </div>
 
+    <!-- Interactive Merchant Shop & Town Market (Supabase Synced) -->
+    <div style="background: var(--bg-card); border: 1px solid rgba(16,185,129,0.35); border-radius: var(--radius-md); padding: 0.9rem 1rem; margin-bottom: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem;">
+        <div>
+          <strong style="color: #6ee7b7; font-size: 0.95rem;">🏪 Town Market &amp; Merchant Shop (Supabase)</strong>
+          <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem;">Buy gear into your pack or sell items for 50% GP value</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <label for="shop-buyer-select" style="font-size: 0.75rem; color: var(--text-muted);">Buyer / Seller:</label>
+          <select id="shop-buyer-select" class="editor-input" style="font-size: 0.78rem; padding: 2px 6px; width: auto;"></select>
+          <span id="shop-buyer-gold" style="font-size: 0.8rem; font-weight: bold; color: var(--text-gold);"></span>
+        </div>
+      </div>
+      <div id="party-merchant-shop-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.55rem; font-size: 0.78rem;"></div>
+    </div>
+
     <!-- Character Cards Grid -->
     <div class="party-grid" id="party-characters-grid"></div>
 
@@ -8221,6 +8605,73 @@ function renderPartyView(container) {
     }
   }
   renderLootAndRecaps();
+
+  // Interactive Merchant Shop & Town Market (Supabase Synced)
+  const buyerSelect = container.querySelector('#shop-buyer-select');
+  const buyerGoldEl = container.querySelector('#shop-buyer-gold');
+  const shopListEl = container.querySelector('#party-merchant-shop-list');
+
+  function populateBuyerSelect() {
+    if (!buyerSelect) return;
+    const prev = buyerSelect.value;
+    const chars = worldState.data.partyCharacters || [];
+    const activeHero = worldState.getActiveHero ? worldState.getActiveHero() : chars[0];
+    buyerSelect.innerHTML = chars.length
+      ? chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+      : `<option value="">No Hero Available</option>`;
+    if (prev && chars.some(c => c.id === prev)) {
+      buyerSelect.value = prev;
+    } else if (activeHero) {
+      buyerSelect.value = activeHero.id;
+    }
+  }
+
+  function renderMerchantShop() {
+    if (!shopListEl || typeof worldState.getShopInventory !== 'function') return;
+    populateBuyerSelect();
+    const chars = worldState.data.partyCharacters || [];
+    const selectedHero = chars.find(c => c.id === buyerSelect?.value) || chars[0];
+    const heroGp = selectedHero?.currency?.gp ?? 0;
+    if (buyerGoldEl) {
+      buyerGoldEl.textContent = selectedHero ? `💰 ${heroGp} GP` : '';
+    }
+
+    const items = worldState.getShopInventory();
+    shopListEl.innerHTML = items.map((item, idx) => {
+      const outOfStock = (item.stock ?? 0) <= 0;
+      const canAfford = selectedHero && heroGp >= (item.priceGp || 0);
+      return `
+        <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; display: flex; flex-direction: column; justify-content: space-between; gap: 0.35rem;">
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.3rem;">
+              <strong style="color: var(--text-primary);">${item.name}</strong>
+              <span style="color: var(--text-gold); font-weight: bold;">${item.priceGp} GP</span>
+            </div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+              ${item.category || 'gear'} • Stock: <strong>${item.stock ?? 0}</strong>${item.notes ? ` • ${item.notes}` : ''}
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm shop-buy-btn" data-idx="${idx}" ${outOfStock || !canAfford ? 'disabled' : ''} style="font-size: 0.72rem; padding: 3px 8px; border-color: #10b981; color: #6ee7b7; ${outOfStock || !canAfford ? 'opacity: 0.45; cursor: not-allowed;' : ''}">
+            ${outOfStock ? 'Sold Out' : `Buy (${item.priceGp} GP)`}
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    shopListEl.querySelectorAll('.shop-buy-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!selectedHero) return;
+        const idx = parseInt(btn.getAttribute('data-idx'), 10);
+        const res = await worldState.buyShopItem(selectedHero.id, idx);
+        if (!res.success && res.error) alert(res.error);
+        soundEngine.playDiceRoll(true);
+        renderMerchantShop();
+      });
+    });
+  }
+
+  buyerSelect?.addEventListener('change', renderMerchantShop);
+  renderMerchantShop();
 
   container.querySelector('#party-drop-loot-btn')?.addEventListener('click', async () => {
     const title = prompt('Treasure Chest Name:', 'Goblin Vault Hoard');
@@ -8996,6 +9447,31 @@ function renderHeroView(container) {
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
 
+          <!-- Interactive 18 D&D 5.5e Skills Matrix (Proficiency & Expertise) -->
+          <details style="margin-top: 1rem; background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;" open>
+            <summary style="cursor: pointer; font-weight: bold; color: var(--text-gold); font-size: 0.85rem;">
+              🎯 5.5e Skills Matrix (18 Skills — Click dot for Prof/Exp, Click name to Roll)
+            </summary>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 0.3rem; margin-top: 0.6rem;">
+              ${(worldState.getDnd55eSkills ? worldState.getDnd55eSkills() : []).map(sk => {
+                const rank = (activeHero.skillProficiencies && activeHero.skillProficiencies[sk.name]) || 0;
+                const bonus = worldState.getSkillBonus ? worldState.getSkillBonus(activeHero, sk.name) : 0;
+                const fmtB = bonus >= 0 ? `+${bonus}` : `${bonus}`;
+                const badge = rank === 2 ? '★' : (rank === 1 ? '●' : '○');
+                const col = rank === 2 ? '#fde047' : (rank === 1 ? '#86efac' : '#64748b');
+                return `
+                  <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 3px 6px; font-size: 0.74rem;">
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                      <button type="button" class="hero-skill-prof-btn" data-skill="${sk.name}" title="Cycle: None / Proficient / Expertise" style="background:none;border:none;cursor:pointer;color:${col};font-size:0.85rem;padding:0;">${badge}</button>
+                      <button type="button" class="hero-skill-roll-btn" data-skill="${sk.name}" style="background:none;border:none;cursor:pointer;color:var(--text-primary);padding:0;text-align:left;">${sk.name}</button>
+                    </div>
+                    <strong style="color: ${bonus >= 0 ? '#86efac' : '#fca5a5'}; font-family: var(--font-mono);">${fmtB}</strong>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </details>
+
           <!-- DM Handouts & Secret Clues Drawer (Supabase) -->
           ${(worldState.getHandouts && worldState.getHandouts(activeHero.id).length > 0) ? `
             <div style="margin-top: 1rem; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: var(--radius-md); padding: 0.75rem;">
@@ -9248,6 +9724,25 @@ function renderHeroView(container) {
   container.querySelector('#btn-hero-stabilize')?.addEventListener('click', () => {
     worldState.stabilizeCharacter(activeHero.id);
     renderHeroView(container);
+  });
+
+  // 18 Skills Matrix Handlers
+  container.querySelectorAll('.hero-skill-prof-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      worldState.toggleSkillProficiency(activeHero.id, btn.getAttribute('data-skill'));
+      renderHeroView(container);
+    });
+  });
+  container.querySelectorAll('.hero-skill-roll-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sk = btn.getAttribute('data-skill');
+      const r = worldState.rollSkillCheck(activeHero.id, sk);
+      if (r && diceResultBanner) {
+        try { soundEngine.playDiceRoll(r.d20 === 20); } catch (_) {}
+        diceResultBanner.style.display = 'block';
+        diceResultBanner.innerHTML = `🎯 <strong>${activeHero.name}</strong> rolled <strong>${sk}</strong>: <code>1d20 (${r.d20}) ${r.bonus >= 0 ? '+' : '-'} ${Math.abs(r.bonus)}</code> = <strong style="color:var(--text-gold);font-size:1.1rem;">${r.total}</strong>`;
+      }
+    });
   });
 
   // Rest Controls
@@ -14257,7 +14752,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.7';
+    window.APP_VERSION = '1.8';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

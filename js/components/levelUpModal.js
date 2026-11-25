@@ -9,11 +9,54 @@ import { soundEngine } from '../audio/soundEngine.js';
 
 export const DND_LEVEL_UP_DATA = {
   classes: {
+    Artificer: {
+      hitDie: 8,
+      caster: 'half',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: [
+        'Alchemist (TCoE / Eberron)',
+        'Armorer (TCoE)',
+        'Artillerist (TCoE / Eberron)',
+        'Battle Smith (TCoE / Eberron)'
+      ],
+      featuresByLevel: {
+        2: ['Infuse Item (4 Infusions Known, 2 Active)'],
+        3: ['Artificer Specialist (Subclass)', 'The Right Tool for the Job'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Artificer Specialist Feature (Extra Attack / Alchemical Savant / Arcane Firearm)'],
+        6: ['Tool Expertise', 'Infusions (6 Known, 3 Active)'],
+        7: ['Flash of Genius'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Artificer Specialist Feature'],
+        10: ['Magic Item Adept', 'Infusions (8 Known, 4 Active)'],
+        11: ['Spell-Storing Item'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['4th-Level Spell Slot'],
+        14: ['Magic Item Savant', 'Infusions (10 Known, 5 Active)'],
+        15: ['Artificer Specialist Capstone'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['5th-Level Spell Slot'],
+        18: ['Magic Item Master', 'Infusions (12 Known, 6 Active)'],
+        19: ['Epic Boon'],
+        20: ['Soul of Artifice']
+      }
+    },
     Barbarian: {
       hitDie: 12,
       caster: 'none',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Path of the Berserker', 'Path of the Wild Heart', 'Path of the World Tree', 'Path of the Zealot'],
+      subclasses: [
+        'Path of the Berserker (PHB 2024 / 2014)',
+        'Path of the Wild Heart / Totem Warrior (PHB 2024 / 2014)',
+        'Path of the World Tree (PHB 2024)',
+        'Path of the Zealot (PHB 2024 / XGtE)',
+        'Path of the Ancestral Guardian (XGtE)',
+        'Path of the Storm Herald (XGtE)',
+        'Path of the Battlerager (SCAG)',
+        'Path of the Beast (TCoE)',
+        'Path of Wild Magic (TCoE)',
+        'Path of the Giant (Bigby\'s)'
+      ],
       featuresByLevel: {
         2: ['Danger Sense', 'Reckless Attack'],
         3: ['Barbarian Subclass', 'Primal Knowledge'],
@@ -40,7 +83,17 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['College of Dance', 'College of Glamour', 'College of Lore', 'College of Valor'],
+      subclasses: [
+        'College of Dance (PHB 2024)',
+        'College of Glamour (PHB 2024 / XGtE)',
+        'College of Lore (PHB 2024 / 2014)',
+        'College of Valor (PHB 2024 / 2014)',
+        'College of Swords (XGtE)',
+        'College of Whispers (XGtE)',
+        'College of Creation (TCoE)',
+        'College of Eloquence (TCoE / MOoT)',
+        'College of Spirits (VRGtR)'
+      ],
       featuresByLevel: {
         2: ['Expertise', 'Jack of All Trades'],
         3: ['Bard Subclass'],
@@ -67,7 +120,22 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Life Domain', 'Light Domain', 'Trickery Domain', 'War Domain'],
+      subclasses: [
+        'Life Domain (PHB 2024 / 2014)',
+        'Light Domain (PHB 2024 / 2014)',
+        'Trickery Domain (PHB 2024 / 2014)',
+        'War Domain (PHB 2024 / 2014)',
+        'Knowledge Domain (PHB 2014)',
+        'Nature Domain (PHB 2014)',
+        'Tempest Domain (PHB 2014)',
+        'Death Domain (DMG)',
+        'Arcana Domain (SCAG)',
+        'Forge Domain (XGtE)',
+        'Grave Domain (XGtE)',
+        'Order Domain (TCoE / GGtR)',
+        'Peace Domain (TCoE)',
+        'Twilight Domain (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Channel Divinity', 'Divine Spark / Turn Undead'],
         3: ['Cleric Subclass'],
@@ -94,7 +162,16 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Circle of the Land', 'Circle of the Moon', 'Circle of the Sea', 'Circle of the Stars'],
+      subclasses: [
+        'Circle of the Land (PHB 2024 / 2014)',
+        'Circle of the Moon (PHB 2024 / 2014)',
+        'Circle of the Sea (PHB 2024)',
+        'Circle of the Stars (PHB 2024 / TCoE)',
+        'Circle of Dreams (XGtE)',
+        'Circle of the Shepherd (XGtE)',
+        'Circle of Spores (TCoE / GGtR)',
+        'Circle of Wildfire (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Wild Shape', 'Wild Companion'],
         3: ['Druid Subclass'],
@@ -121,7 +198,18 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'none',
       asiLevels: [4, 6, 8, 12, 14, 16, 19],
-      subclasses: ['Battle Master', 'Champion', 'Eldritch Knight', 'Psi Warrior'],
+      subclasses: [
+        'Battle Master (PHB 2024 / 2014)',
+        'Champion (PHB 2024 / 2014)',
+        'Eldritch Knight (PHB 2024 / 2014)',
+        'Psi Warrior (PHB 2024 / TCoE)',
+        'Arcane Archer (XGtE)',
+        'Cavalier (XGtE)',
+        'Samurai (XGtE)',
+        'Banneret / Purple Dragon Knight (SCAG)',
+        'Rune Knight (TCoE)',
+        'Echo Knight (EGtW)'
+      ],
       featuresByLevel: {
         2: ['Action Surge', 'Tactical Mind'],
         3: ['Fighter Subclass'],
@@ -148,7 +236,18 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'none',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Warrior of Mercy', 'Warrior of Shadow', 'Warrior of the Elements', 'Warrior of the Open Hand'],
+      subclasses: [
+        'Warrior of Mercy (PHB 2024 / TCoE)',
+        'Warrior of Shadow (PHB 2024 / 2014)',
+        'Warrior of the Elements (PHB 2024 / 2014)',
+        'Warrior of the Open Hand (PHB 2024 / 2014)',
+        'Way of the Long Death (SCAG)',
+        'Way of the Sun Soul (SCAG / XGtE)',
+        'Way of the Drunken Master (XGtE)',
+        'Way of the Kensei (XGtE)',
+        'Way of the Astral Self (TCoE)',
+        'Way of the Ascendant Dragon (Fizban\'s)'
+      ],
       featuresByLevel: {
         2: ["Monk's Focus", 'Unarmored Movement (+10 ft)', 'Uncanny Metabolism'],
         3: ['Monk Subclass', 'Deflect Attacks'],
@@ -175,7 +274,17 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'half',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Oath of Devotion', 'Oath of Glory', 'Oath of the Ancients', 'Oath of Vengeance'],
+      subclasses: [
+        'Oath of Devotion (PHB 2024 / 2014)',
+        'Oath of Glory (PHB 2024 / TCoE / MOoT)',
+        'Oath of the Ancients (PHB 2024 / 2014)',
+        'Oath of Vengeance (PHB 2024 / 2014)',
+        'Oathbreaker (DMG)',
+        'Oath of the Crown (SCAG)',
+        'Oath of Conquest (XGtE)',
+        'Oath of Redemption (XGtE)',
+        'Oath of the Watchers (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Fighting Style', "Paladin's Smite"],
         3: ['Paladin Subclass', 'Channel Divinity'],
@@ -202,7 +311,16 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'half',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Beast Master', 'Fey Wanderer', 'Gloom Stalker', 'Hunter'],
+      subclasses: [
+        'Beast Master (PHB 2024 / 2014)',
+        'Fey Wanderer (PHB 2024 / TCoE)',
+        'Gloom Stalker (PHB 2024 / XGtE)',
+        'Hunter (PHB 2024 / 2014)',
+        'Horizon Walker (XGtE)',
+        'Monster Slayer (XGtE)',
+        'Swarmkeeper (TCoE)',
+        'Drakewarden (Fizban\'s)'
+      ],
       featuresByLevel: {
         2: ['Deft Explorer', 'Fighting Style'],
         3: ['Ranger Subclass'],
@@ -229,7 +347,17 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'none',
       asiLevels: [4, 8, 10, 12, 16, 19],
-      subclasses: ['Arcane Trickster', 'Assassin', 'Soulknife', 'Thief'],
+      subclasses: [
+        'Arcane Trickster (PHB 2024 / 2014)',
+        'Assassin (PHB 2024 / 2014)',
+        'Soulknife (PHB 2024 / TCoE)',
+        'Thief (PHB 2024 / 2014)',
+        'Mastermind (SCAG / XGtE)',
+        'Swashbuckler (SCAG / XGtE)',
+        'Inquisitive (XGtE)',
+        'Scout (XGtE)',
+        'Phantom (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Cunning Action'],
         3: ['Rogue Subclass', 'Steady Aim', 'Sneak Attack (2d6)'],
@@ -256,7 +384,16 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 6,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Aberrant Sorcery', 'Clockwork Sorcery', 'Draconic Sorcery', 'Wild Magic Sorcery'],
+      subclasses: [
+        'Aberrant Sorcery / Aberrant Mind (PHB 2024 / TCoE)',
+        'Clockwork Sorcery / Clockwork Soul (PHB 2024 / TCoE)',
+        'Draconic Sorcery / Draconic Bloodline (PHB 2024 / 2014)',
+        'Wild Magic Sorcery (PHB 2024 / 2014)',
+        'Storm Sorcery (SCAG / XGtE)',
+        'Divine Soul (XGtE)',
+        'Shadow Magic (XGtE)',
+        'Lunar Sorcery (Dragonlance)'
+      ],
       featuresByLevel: {
         2: ['Font of Magic (Sorcery Points)', 'Metamagic (2 options)'],
         3: ['Sorcerer Subclass'],
@@ -283,7 +420,17 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'pact',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Archfey Patron', 'Celestial Patron', 'Fiend Patron', 'Great Old One Patron'],
+      subclasses: [
+        'Archfey Patron (PHB 2024 / 2014)',
+        'Celestial Patron (PHB 2024 / XGtE)',
+        'Fiend Patron (PHB 2024 / 2014)',
+        'Great Old One Patron (PHB 2024 / 2014)',
+        'The Undying (SCAG)',
+        'The Hexblade (XGtE)',
+        'The Fathomless (TCoE)',
+        'The Genie (TCoE)',
+        'The Undead (VRGtR)'
+      ],
       featuresByLevel: {
         2: ['Magical Cunning', 'Eldritch Invocations (3 total)'],
         3: ['Warlock Subclass', '2nd-Level Pact Slots'],
@@ -310,7 +457,21 @@ export const DND_LEVEL_UP_DATA = {
       hitDie: 6,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Abjurer', 'Diviner', 'Evoker', 'Illusionist'],
+      subclasses: [
+        'Abjurer / School of Abjuration (PHB 2024 / 2014)',
+        'Diviner / School of Divination (PHB 2024 / 2014)',
+        'Evoker / School of Evocation (PHB 2024 / 2014)',
+        'Illusionist / School of Illusion (PHB 2024 / 2014)',
+        'School of Conjuration (PHB 2014)',
+        'School of Enchantment (PHB 2014)',
+        'School of Necromancy (PHB 2014)',
+        'School of Transmutation (PHB 2014)',
+        'Bladesinging (SCAG / TCoE)',
+        'War Magic (XGtE)',
+        'Order of Scribes (TCoE)',
+        'Chronurgy Magic (EGtW)',
+        'Graviturgy Magic (EGtW)'
+      ],
       featuresByLevel: {
         2: ['Scholar (Expertise in Arcane Skill)'],
         3: ['Wizard Subclass', '2nd-Level Spell Slots'],

@@ -1519,6 +1519,24 @@ class SupabaseCampaignService {
     }));
   }
 
+  async fetchOfficialSubclasses() {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('official_subclasses')
+      .select('class_name, name, source_book')
+      .order('id', { ascending: true });
+    if (error) {
+      console.warn('[Supabase] fetchOfficialSubclasses error:', error.message);
+      return null;
+    }
+    const grouped = {};
+    (data || []).forEach(row => {
+      if (!grouped[row.class_name]) grouped[row.class_name] = [];
+      grouped[row.class_name].push(`${row.name} (${row.source_book})`);
+    });
+    return grouped;
+  }
+
   async verifyCampaignPassword(campaignId, password) {
     if (!this.isAvailable()) return null;
     try {
@@ -2130,7 +2148,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.1';
+    this.version = '1.2';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2670,6 +2688,7 @@ class WorldStateManager {
       level: level,
       species: charData.species || 'Human',
       classRole: charData.classRole || 'Fighter',
+      subclass: charData.subclass || null,
       alignment: charData.alignment || 'Neutral Good',
       background: charData.background || 'Wayfarer',
       originFeat: charData.originFeat || 'Lucky',
@@ -5215,11 +5234,54 @@ function renderEditorView(container) {
  */
 const DND_LEVEL_UP_DATA = {
   classes: {
+    Artificer: {
+      hitDie: 8,
+      caster: 'half',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: [
+        'Alchemist (TCoE / Eberron)',
+        'Armorer (TCoE)',
+        'Artillerist (TCoE / Eberron)',
+        'Battle Smith (TCoE / Eberron)'
+      ],
+      featuresByLevel: {
+        2: ['Infuse Item (4 Infusions Known, 2 Active)'],
+        3: ['Artificer Specialist (Subclass)', 'The Right Tool for the Job'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Artificer Specialist Feature (Extra Attack / Alchemical Savant / Arcane Firearm)'],
+        6: ['Tool Expertise', 'Infusions (6 Known, 3 Active)'],
+        7: ['Flash of Genius'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Artificer Specialist Feature'],
+        10: ['Magic Item Adept', 'Infusions (8 Known, 4 Active)'],
+        11: ['Spell-Storing Item'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['4th-Level Spell Slot'],
+        14: ['Magic Item Savant', 'Infusions (10 Known, 5 Active)'],
+        15: ['Artificer Specialist Capstone'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['5th-Level Spell Slot'],
+        18: ['Magic Item Master', 'Infusions (12 Known, 6 Active)'],
+        19: ['Epic Boon'],
+        20: ['Soul of Artifice']
+      }
+    },
     Barbarian: {
       hitDie: 12,
       caster: 'none',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Path of the Berserker', 'Path of the Wild Heart', 'Path of the World Tree', 'Path of the Zealot'],
+      subclasses: [
+        'Path of the Berserker (PHB 2024 / 2014)',
+        'Path of the Wild Heart / Totem Warrior (PHB 2024 / 2014)',
+        'Path of the World Tree (PHB 2024)',
+        'Path of the Zealot (PHB 2024 / XGtE)',
+        'Path of the Ancestral Guardian (XGtE)',
+        'Path of the Storm Herald (XGtE)',
+        'Path of the Battlerager (SCAG)',
+        'Path of the Beast (TCoE)',
+        'Path of Wild Magic (TCoE)',
+        'Path of the Giant (Bigby\'s)'
+      ],
       featuresByLevel: {
         2: ['Danger Sense', 'Reckless Attack'],
         3: ['Barbarian Subclass', 'Primal Knowledge'],
@@ -5246,7 +5308,17 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['College of Dance', 'College of Glamour', 'College of Lore', 'College of Valor'],
+      subclasses: [
+        'College of Dance (PHB 2024)',
+        'College of Glamour (PHB 2024 / XGtE)',
+        'College of Lore (PHB 2024 / 2014)',
+        'College of Valor (PHB 2024 / 2014)',
+        'College of Swords (XGtE)',
+        'College of Whispers (XGtE)',
+        'College of Creation (TCoE)',
+        'College of Eloquence (TCoE / MOoT)',
+        'College of Spirits (VRGtR)'
+      ],
       featuresByLevel: {
         2: ['Expertise', 'Jack of All Trades'],
         3: ['Bard Subclass'],
@@ -5273,7 +5345,22 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Life Domain', 'Light Domain', 'Trickery Domain', 'War Domain'],
+      subclasses: [
+        'Life Domain (PHB 2024 / 2014)',
+        'Light Domain (PHB 2024 / 2014)',
+        'Trickery Domain (PHB 2024 / 2014)',
+        'War Domain (PHB 2024 / 2014)',
+        'Knowledge Domain (PHB 2014)',
+        'Nature Domain (PHB 2014)',
+        'Tempest Domain (PHB 2014)',
+        'Death Domain (DMG)',
+        'Arcana Domain (SCAG)',
+        'Forge Domain (XGtE)',
+        'Grave Domain (XGtE)',
+        'Order Domain (TCoE / GGtR)',
+        'Peace Domain (TCoE)',
+        'Twilight Domain (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Channel Divinity', 'Divine Spark / Turn Undead'],
         3: ['Cleric Subclass'],
@@ -5300,7 +5387,16 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Circle of the Land', 'Circle of the Moon', 'Circle of the Sea', 'Circle of the Stars'],
+      subclasses: [
+        'Circle of the Land (PHB 2024 / 2014)',
+        'Circle of the Moon (PHB 2024 / 2014)',
+        'Circle of the Sea (PHB 2024)',
+        'Circle of the Stars (PHB 2024 / TCoE)',
+        'Circle of Dreams (XGtE)',
+        'Circle of the Shepherd (XGtE)',
+        'Circle of Spores (TCoE / GGtR)',
+        'Circle of Wildfire (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Wild Shape', 'Wild Companion'],
         3: ['Druid Subclass'],
@@ -5327,7 +5423,18 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'none',
       asiLevels: [4, 6, 8, 12, 14, 16, 19],
-      subclasses: ['Battle Master', 'Champion', 'Eldritch Knight', 'Psi Warrior'],
+      subclasses: [
+        'Battle Master (PHB 2024 / 2014)',
+        'Champion (PHB 2024 / 2014)',
+        'Eldritch Knight (PHB 2024 / 2014)',
+        'Psi Warrior (PHB 2024 / TCoE)',
+        'Arcane Archer (XGtE)',
+        'Cavalier (XGtE)',
+        'Samurai (XGtE)',
+        'Banneret / Purple Dragon Knight (SCAG)',
+        'Rune Knight (TCoE)',
+        'Echo Knight (EGtW)'
+      ],
       featuresByLevel: {
         2: ['Action Surge', 'Tactical Mind'],
         3: ['Fighter Subclass'],
@@ -5354,7 +5461,18 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'none',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Warrior of Mercy', 'Warrior of Shadow', 'Warrior of the Elements', 'Warrior of the Open Hand'],
+      subclasses: [
+        'Warrior of Mercy (PHB 2024 / TCoE)',
+        'Warrior of Shadow (PHB 2024 / 2014)',
+        'Warrior of the Elements (PHB 2024 / 2014)',
+        'Warrior of the Open Hand (PHB 2024 / 2014)',
+        'Way of the Long Death (SCAG)',
+        'Way of the Sun Soul (SCAG / XGtE)',
+        'Way of the Drunken Master (XGtE)',
+        'Way of the Kensei (XGtE)',
+        'Way of the Astral Self (TCoE)',
+        'Way of the Ascendant Dragon (Fizban\'s)'
+      ],
       featuresByLevel: {
         2: ["Monk's Focus", 'Unarmored Movement (+10 ft)', 'Uncanny Metabolism'],
         3: ['Monk Subclass', 'Deflect Attacks'],
@@ -5381,7 +5499,17 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'half',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Oath of Devotion', 'Oath of Glory', 'Oath of the Ancients', 'Oath of Vengeance'],
+      subclasses: [
+        'Oath of Devotion (PHB 2024 / 2014)',
+        'Oath of Glory (PHB 2024 / TCoE / MOoT)',
+        'Oath of the Ancients (PHB 2024 / 2014)',
+        'Oath of Vengeance (PHB 2024 / 2014)',
+        'Oathbreaker (DMG)',
+        'Oath of the Crown (SCAG)',
+        'Oath of Conquest (XGtE)',
+        'Oath of Redemption (XGtE)',
+        'Oath of the Watchers (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Fighting Style', "Paladin's Smite"],
         3: ['Paladin Subclass', 'Channel Divinity'],
@@ -5408,7 +5536,16 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 10,
       caster: 'half',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Beast Master', 'Fey Wanderer', 'Gloom Stalker', 'Hunter'],
+      subclasses: [
+        'Beast Master (PHB 2024 / 2014)',
+        'Fey Wanderer (PHB 2024 / TCoE)',
+        'Gloom Stalker (PHB 2024 / XGtE)',
+        'Hunter (PHB 2024 / 2014)',
+        'Horizon Walker (XGtE)',
+        'Monster Slayer (XGtE)',
+        'Swarmkeeper (TCoE)',
+        'Drakewarden (Fizban\'s)'
+      ],
       featuresByLevel: {
         2: ['Deft Explorer', 'Fighting Style'],
         3: ['Ranger Subclass'],
@@ -5435,7 +5572,17 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'none',
       asiLevels: [4, 8, 10, 12, 16, 19],
-      subclasses: ['Arcane Trickster', 'Assassin', 'Soulknife', 'Thief'],
+      subclasses: [
+        'Arcane Trickster (PHB 2024 / 2014)',
+        'Assassin (PHB 2024 / 2014)',
+        'Soulknife (PHB 2024 / TCoE)',
+        'Thief (PHB 2024 / 2014)',
+        'Mastermind (SCAG / XGtE)',
+        'Swashbuckler (SCAG / XGtE)',
+        'Inquisitive (XGtE)',
+        'Scout (XGtE)',
+        'Phantom (TCoE)'
+      ],
       featuresByLevel: {
         2: ['Cunning Action'],
         3: ['Rogue Subclass', 'Steady Aim', 'Sneak Attack (2d6)'],
@@ -5462,7 +5609,16 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 6,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Aberrant Sorcery', 'Clockwork Sorcery', 'Draconic Sorcery', 'Wild Magic Sorcery'],
+      subclasses: [
+        'Aberrant Sorcery / Aberrant Mind (PHB 2024 / TCoE)',
+        'Clockwork Sorcery / Clockwork Soul (PHB 2024 / TCoE)',
+        'Draconic Sorcery / Draconic Bloodline (PHB 2024 / 2014)',
+        'Wild Magic Sorcery (PHB 2024 / 2014)',
+        'Storm Sorcery (SCAG / XGtE)',
+        'Divine Soul (XGtE)',
+        'Shadow Magic (XGtE)',
+        'Lunar Sorcery (Dragonlance)'
+      ],
       featuresByLevel: {
         2: ['Font of Magic (Sorcery Points)', 'Metamagic (2 options)'],
         3: ['Sorcerer Subclass'],
@@ -5489,7 +5645,17 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 8,
       caster: 'pact',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Archfey Patron', 'Celestial Patron', 'Fiend Patron', 'Great Old One Patron'],
+      subclasses: [
+        'Archfey Patron (PHB 2024 / 2014)',
+        'Celestial Patron (PHB 2024 / XGtE)',
+        'Fiend Patron (PHB 2024 / 2014)',
+        'Great Old One Patron (PHB 2024 / 2014)',
+        'The Undying (SCAG)',
+        'The Hexblade (XGtE)',
+        'The Fathomless (TCoE)',
+        'The Genie (TCoE)',
+        'The Undead (VRGtR)'
+      ],
       featuresByLevel: {
         2: ['Magical Cunning', 'Eldritch Invocations (3 total)'],
         3: ['Warlock Subclass', '2nd-Level Pact Slots'],
@@ -5516,7 +5682,21 @@ const DND_LEVEL_UP_DATA = {
       hitDie: 6,
       caster: 'full',
       asiLevels: [4, 8, 12, 16, 19],
-      subclasses: ['Abjurer', 'Diviner', 'Evoker', 'Illusionist'],
+      subclasses: [
+        'Abjurer / School of Abjuration (PHB 2024 / 2014)',
+        'Diviner / School of Divination (PHB 2024 / 2014)',
+        'Evoker / School of Evocation (PHB 2024 / 2014)',
+        'Illusionist / School of Illusion (PHB 2024 / 2014)',
+        'School of Conjuration (PHB 2014)',
+        'School of Enchantment (PHB 2014)',
+        'School of Necromancy (PHB 2014)',
+        'School of Transmutation (PHB 2014)',
+        'Bladesinging (SCAG / TCoE)',
+        'War Magic (XGtE)',
+        'Order of Scribes (TCoE)',
+        'Chronurgy Magic (EGtW)',
+        'Graviturgy Magic (EGtW)'
+      ],
       featuresByLevel: {
         2: ['Scholar (Expertise in Arcane Skill)'],
         3: ['Wizard Subclass', '2nd-Level Spell Slots'],
@@ -7949,6 +8129,7 @@ function renderCharacterCreateView(container) {
   ];
 
   const CLASS_LIST = [
+    { name: 'Artificer', hitDie: 8, primary: 'INT & CON', masteries: [], armor: 'Shields, Light & Medium Armor' },
     { name: 'Barbarian', hitDie: 12, primary: 'STR & CON', masteries: ['Cleave (Greataxe)', 'Topple (Warhammer)'], armor: 'Shields, Light & Medium Armor' },
     { name: 'Bard', hitDie: 8, primary: 'CHA & DEX', masteries: ['Vex (Shortsword)'], armor: 'Light Armor' },
     { name: 'Cleric', hitDie: 8, primary: 'WIS & CON', masteries: ['Sap (Mace)'], armor: 'Shields, Light & Medium Armor' },
@@ -7995,7 +8176,9 @@ function renderCharacterCreateView(container) {
       { dice: [4, 4, 2, 1], dropped: 1, total: 10 },
       { dice: [3, 3, 2, 1], dropped: 1, total: 8 }
     ],
-    selectedClass: CLASS_LIST[4], // Fighter
+    selectedClass: CLASS_LIST[5], // Fighter
+    selectedSubclass: '',
+    customSubclass: '',
     selectedSpecies: SPECIES_LIST[0], // Human
     level: 1,
     characterName: '',
@@ -8147,11 +8330,28 @@ function renderCharacterCreateView(container) {
             </div>
 
             <div class="form-group">
-              <label for="create-char-class">Class (D&D 5.5e)</label>
+              <label for="create-char-class">Class (D&D 5.5e / Official)</label>
               <select id="create-char-class" class="form-control">
                 ${CLASS_LIST.map(c => `<option value="${c.name}" ${c.name === state.selectedClass.name ? 'selected' : ''}>${c.name} (d${c.hitDie}) - ${c.primary}</option>`).join('')}
               </select>
               <small style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 0.25rem;">Armor: ${state.selectedClass.armor}</small>
+            </div>
+          </div>
+
+          <!-- Official Subclass Picker (All Official WotC Books) -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div class="form-group">
+              <label for="create-char-subclass">Official Subclass ${state.level >= 3 ? '(Unlocked)' : '(Optional / Chosen at Lv 3)'}</label>
+              <select id="create-char-subclass" class="form-control">
+                <option value="">-- Choose Subclass (Optional at Lv 1–2) --</option>
+                ${((typeof DND_LEVEL_UP_DATA !== 'undefined' && DND_LEVEL_UP_DATA.classes[state.selectedClass.name]) ? DND_LEVEL_UP_DATA.classes[state.selectedClass.name].subclasses : []).map(sc => `
+                  <option value="${sc}" ${state.selectedSubclass === sc ? 'selected' : ''}>${sc}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="create-char-subclass-custom">Or Custom / Homebrew Subclass</label>
+              <input type="text" id="create-char-subclass-custom" class="form-control" placeholder="Leave blank to use official list..." value="${state.customSubclass}">
             </div>
           </div>
 
@@ -8441,7 +8641,22 @@ function renderCharacterCreateView(container) {
     if (classSelect) {
       classSelect.addEventListener('change', (e) => {
         state.selectedClass = CLASS_LIST.find(c => c.name === e.target.value) || CLASS_LIST[0];
+        state.selectedSubclass = '';
         render();
+      });
+    }
+
+    const subclassSelect = container.querySelector('#create-char-subclass');
+    if (subclassSelect) {
+      subclassSelect.addEventListener('change', (e) => {
+        state.selectedSubclass = e.target.value;
+      });
+    }
+
+    const customSubclassInput = container.querySelector('#create-char-subclass-custom');
+    if (customSubclassInput) {
+      customSubclassInput.addEventListener('input', (e) => {
+        state.customSubclass = e.target.value;
       });
     }
 
@@ -8551,11 +8766,13 @@ function renderCharacterCreateView(container) {
         }
 
         const activeStats = getActiveStats();
+        const chosenSubclass = (state.customSubclass || state.selectedSubclass || '').trim();
         const charPayload = {
           name: name,
           level: state.level,
           species: state.selectedSpecies.name,
-          classRole: state.selectedClass.name,
+          classRole: chosenSubclass ? `${state.selectedClass.name} (${chosenSubclass})` : state.selectedClass.name,
+          subclass: chosenSubclass || null,
           hitDie: state.selectedClass.hitDie,
           alignment: state.alignment,
           background: state.selectedBackground.name,
@@ -12008,7 +12225,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.1';
+    window.APP_VERSION = '1.2';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

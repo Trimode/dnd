@@ -10,7 +10,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=1.1"></script>
+  <script src="js/bundle.js?v=1.2"></script>
 
   <script>
     (async function() {
@@ -28,7 +28,13 @@
         // 1. Exports & 5.5e data completeness
         assert(typeof window.openLevelUpModal === 'function', "openLevelUpModal is exposed on window");
         assert(typeof window.DND_LEVEL_UP_DATA === 'object', "DND_LEVEL_UP_DATA is exposed on window");
-        assert(Object.keys(DND_LEVEL_UP_DATA.classes).length === 12, "All 12 D&D 5.5e classes configured in level-up table");
+        assert(Object.keys(DND_LEVEL_UP_DATA.classes).length === 13, "All 13 official D&D classes configured (including Artificer)");
+        const totalSubclasses = Object.values(DND_LEVEL_UP_DATA.classes).reduce((sum, c) => sum + c.subclasses.length, 0);
+        assert(totalSubclasses >= 120, "All official book subclasses populated (" + totalSubclasses + " subclasses across 13 classes)");
+        assert(DND_LEVEL_UP_DATA.classes.Fighter.subclasses.some(s => s.includes('Echo Knight')), "Fighter includes Echo Knight (EGtW)");
+        assert(DND_LEVEL_UP_DATA.classes.Cleric.subclasses.some(s => s.includes('Twilight Domain')), "Cleric includes Twilight Domain (TCoE)");
+        assert(DND_LEVEL_UP_DATA.classes.Wizard.subclasses.some(s => s.includes('Chronurgy Magic')), "Wizard includes Chronurgy Magic (EGtW)");
+        assert(DND_LEVEL_UP_DATA.classes.Artificer.subclasses.some(s => s.includes('Battle Smith')), "Artificer includes Battle Smith (TCoE / Eberron)");
         assert(DND_LEVEL_UP_DATA.feats.length >= 15, "5.5e Feats & Epic Boons library populated (" + DND_LEVEL_UP_DATA.feats.length + " feats)");
         assert(DND_LEVEL_UP_DATA.getProficiencyBonus(5) === 3 && DND_LEVEL_UP_DATA.getProficiencyBonus(17) === 6, "Proficiency bonus scales accurately (+2 to +6)");
 

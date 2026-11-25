@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.1';
+    this.version = '1.2';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -549,6 +549,7 @@ class WorldStateManager {
       level: level,
       species: charData.species || 'Human',
       classRole: charData.classRole || 'Fighter',
+      subclass: charData.subclass || null,
       alignment: charData.alignment || 'Neutral Good',
       background: charData.background || 'Wayfarer',
       originFeat: charData.originFeat || 'Lucky',

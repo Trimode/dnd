@@ -24,6 +24,7 @@ export function renderCharacterCreateView(container) {
   ];
 
   const CLASS_LIST = [
+    { name: 'Artificer', hitDie: 8, primary: 'INT & CON', masteries: [], armor: 'Shields, Light & Medium Armor' },
     { name: 'Barbarian', hitDie: 12, primary: 'STR & CON', masteries: ['Cleave (Greataxe)', 'Topple (Warhammer)'], armor: 'Shields, Light & Medium Armor' },
     { name: 'Bard', hitDie: 8, primary: 'CHA & DEX', masteries: ['Vex (Shortsword)'], armor: 'Light Armor' },
     { name: 'Cleric', hitDie: 8, primary: 'WIS & CON', masteries: ['Sap (Mace)'], armor: 'Shields, Light & Medium Armor' },
@@ -70,7 +71,9 @@ export function renderCharacterCreateView(container) {
       { dice: [4, 4, 2, 1], dropped: 1, total: 10 },
       { dice: [3, 3, 2, 1], dropped: 1, total: 8 }
     ],
-    selectedClass: CLASS_LIST[4], // Fighter
+    selectedClass: CLASS_LIST[5], // Fighter
+    selectedSubclass: '',
+    customSubclass: '',
     selectedSpecies: SPECIES_LIST[0], // Human
     level: 1,
     characterName: '',
@@ -222,11 +225,28 @@ export function renderCharacterCreateView(container) {
             </div>
 
             <div class="form-group">
-              <label for="create-char-class">Class (D&D 5.5e)</label>
+              <label for="create-char-class">Class (D&D 5.5e / Official)</label>
               <select id="create-char-class" class="form-control">
                 ${CLASS_LIST.map(c => `<option value="${c.name}" ${c.name === state.selectedClass.name ? 'selected' : ''}>${c.name} (d${c.hitDie}) - ${c.primary}</option>`).join('')}
               </select>
               <small style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 0.25rem;">Armor: ${state.selectedClass.armor}</small>
+            </div>
+          </div>
+
+          <!-- Official Subclass Picker (All Official WotC Books) -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div class="form-group">
+              <label for="create-char-subclass">Official Subclass ${state.level >= 3 ? '(Unlocked)' : '(Optional / Chosen at Lv 3)'}</label>
+              <select id="create-char-subclass" class="form-control">
+                <option value="">-- Choose Subclass (Optional at Lv 1–2) --</option>
+                ${((typeof DND_LEVEL_UP_DATA !== 'undefined' && DND_LEVEL_UP_DATA.classes[state.selectedClass.name]) ? DND_LEVEL_UP_DATA.classes[state.selectedClass.name].subclasses : []).map(sc => `
+                  <option value="${sc}" ${state.selectedSubclass === sc ? 'selected' : ''}>${sc}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="create-char-subclass-custom">Or Custom / Homebrew Subclass</label>
+              <input type="text" id="create-char-subclass-custom" class="form-control" placeholder="Leave blank to use official list..." value="${state.customSubclass}">
             </div>
           </div>
 
@@ -516,7 +536,22 @@ export function renderCharacterCreateView(container) {
     if (classSelect) {
       classSelect.addEventListener('change', (e) => {
         state.selectedClass = CLASS_LIST.find(c => c.name === e.target.value) || CLASS_LIST[0];
+        state.selectedSubclass = '';
         render();
+      });
+    }
+
+    const subclassSelect = container.querySelector('#create-char-subclass');
+    if (subclassSelect) {
+      subclassSelect.addEventListener('change', (e) => {
+        state.selectedSubclass = e.target.value;
+      });
+    }
+
+    const customSubclassInput = container.querySelector('#create-char-subclass-custom');
+    if (customSubclassInput) {
+      customSubclassInput.addEventListener('input', (e) => {
+        state.customSubclass = e.target.value;
       });
     }
 
@@ -626,11 +661,13 @@ export function renderCharacterCreateView(container) {
         }
 
         const activeStats = getActiveStats();
+        const chosenSubclass = (state.customSubclass || state.selectedSubclass || '').trim();
         const charPayload = {
           name: name,
           level: state.level,
           species: state.selectedSpecies.name,
-          classRole: state.selectedClass.name,
+          classRole: chosenSubclass ? `${state.selectedClass.name} (${chosenSubclass})` : state.selectedClass.name,
+          subclass: chosenSubclass || null,
           hitDie: state.selectedClass.hitDie,
           alignment: state.alignment,
           background: state.selectedBackground.name,

@@ -121,6 +121,24 @@ class SupabaseCampaignService {
     }));
   }
 
+  async fetchOfficialSubclasses() {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('official_subclasses')
+      .select('class_name, name, source_book')
+      .order('id', { ascending: true });
+    if (error) {
+      console.warn('[Supabase] fetchOfficialSubclasses error:', error.message);
+      return null;
+    }
+    const grouped = {};
+    (data || []).forEach(row => {
+      if (!grouped[row.class_name]) grouped[row.class_name] = [];
+      grouped[row.class_name].push(`${row.name} (${row.source_book})`);
+    });
+    return grouped;
+  }
+
   async verifyCampaignPassword(campaignId, password) {
     if (!this.isAvailable()) return null;
     try {

@@ -1771,6 +1771,56 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async fetchCampaignHandouts(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_handouts')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      content: r.content || '',
+      imageUrl: r.image_url || null,
+      targetCharId: r.target_char_id || 'ALL',
+      targetLabel: r.target_label || 'All Players',
+      senderName: r.sender_name || 'Dungeon Master',
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveCampaignHandout(campaignId, h) {
+    if (!this.isAvailable() || !h) return { success: false };
+    const { error } = await this.client.from('campaign_handouts').upsert({
+      id: h.id,
+      campaign_id: campaignId || 'demo',
+      title: h.title,
+      content: h.content || '',
+      image_url: h.imageUrl || null,
+      target_char_id: h.targetCharId || 'ALL',
+      target_label: h.targetLabel || 'All Players',
+      sender_name: h.senderName || 'Dungeon Master'
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async deleteCampaignHandout(handoutId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('campaign_handouts').delete().eq('id', handoutId);
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async savePartyLocation(campaignId, partyLocation) {
+    if (!this.isAvailable() || !partyLocation) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ party_location: partyLocation, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {
@@ -2395,7 +2445,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.6';
+    this.version = '1.7';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2662,12 +2712,13 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
-        supabaseDb.fetchSessionRecaps(targetId)
+        supabaseDb.fetchSessionRecaps(targetId),
+        supabaseDb.fetchCampaignHandouts(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -2675,6 +2726,7 @@ class WorldStateManager {
         if (Array.isArray(remoteMonsters)) this.data.customMonsters = remoteMonsters;
         if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
+        if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -3255,6 +3307,140 @@ class WorldStateManager {
     }
     this.saveData();
     return { success: true, recap };
+  }
+
+  // ==========================================
+  // DM HANDOUTS & PRIVATE CLUE SHARING
+  // ==========================================
+  getHandouts(forCharId = null) {
+    if (!Array.isArray(this.data.campaignHandouts)) this.data.campaignHandouts = [];
+    if (!forCharId || this.prefs.dmMode) return this.data.campaignHandouts;
+    return this.data.campaignHandouts.filter(h => h.targetCharId === 'ALL' || h.targetCharId === forCharId);
+  }
+
+  async sendHandout({ title, content, imageUrl = null, targetCharId = 'ALL', targetLabel = 'All Players' }) {
+    if (!Array.isArray(this.data.campaignHandouts)) this.data.campaignHandouts = [];
+    const handout = {
+      id: 'ho_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: (title || 'Secret Clue').trim(),
+      content: (content || '').trim(),
+      imageUrl: imageUrl || null,
+      targetCharId: targetCharId || 'ALL',
+      targetLabel: targetLabel || (targetCharId === 'ALL' ? 'All Players' : targetCharId),
+      senderName: 'Dungeon Master',
+      createdAt: Date.now()
+    };
+    this.data.campaignHandouts.unshift(handout);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignHandout(this.activeGameId || 'demo', handout);
+    }
+    this.saveData(true);
+    return { success: true, handout };
+  }
+
+  async deleteHandout(handoutId) {
+    this.data.campaignHandouts = this.getHandouts().filter(h => h.id !== handoutId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteCampaignHandout(handoutId);
+    }
+    this.saveData(true);
+  }
+
+  // ==========================================
+  // WORLD MAP PARTY TRACKER & TRAVEL CALCULATOR
+  // ==========================================
+  getPartyLocation() {
+    if (!this.data.partyLocation) {
+      const firstReg = (this.data.regions || [])[0];
+      this.data.partyLocation = {
+        regionId: firstReg ? firstReg.id : 'region-foregrove',
+        regionName: firstReg ? firstReg.name : 'The Foregrove Canopy',
+        travelDaysTotal: 0
+      };
+    }
+    return this.data.partyLocation;
+  }
+
+  calculateTravel(fromRegionId, toRegionId, pace = 'normal') {
+    const regions = this.data.regions || [];
+    const fromR = regions.find(r => r.id === fromRegionId) || regions[0];
+    const toR = regions.find(r => r.id === toRegionId);
+    if (!fromR || !toR || fromR.id === toR.id) {
+      return { distanceMiles: 0, travelDays: 0, rationsNeeded: 0, pace };
+    }
+    const fromX = (fromR.coordinates?.x ?? 50) * 10;
+    const fromY = (fromR.coordinates?.y ?? 50) * 5.6;
+    const toX = (toR.coordinates?.x ?? 50) * 10;
+    const toY = (toR.coordinates?.y ?? 50) * 5.6;
+    const pxDist = Math.hypot(toX - fromX, toY - fromY);
+    const distanceMiles = Math.max(6, Math.round(pxDist * 0.45));
+    const milesPerDay = pace === 'fast' ? 30 : (pace === 'slow' ? 18 : 24);
+    const travelDays = Math.max(1, Math.ceil(distanceMiles / milesPerDay));
+    const partyCount = Math.max(1, (this.data.partyCharacters || []).length);
+    return { distanceMiles, travelDays, rationsNeeded: travelDays * partyCount, pace };
+  }
+
+  async movePartyToRegion(regionId, pace = 'normal') {
+    const target = (this.data.regions || []).find(r => r.id === regionId);
+    if (!target) return { success: false, error: 'Region not found' };
+    const current = this.getPartyLocation();
+    const travel = this.calculateTravel(current.regionId, regionId, pace);
+    const updated = {
+      regionId: target.id,
+      regionName: target.name,
+      travelDaysTotal: (current.travelDaysTotal || 0) + travel.travelDays,
+      lastMove: { from: current.regionName, to: target.name, ...travel, timestamp: Date.now() }
+    };
+    this.data.partyLocation = updated;
+    // Sync every hero's Current World Location Radar
+    (this.data.partyCharacters || []).forEach(c => {
+      if (!c.currentSituation) c.currentSituation = {};
+      c.currentSituation.locationName = target.name;
+      c.currentSituation.lastUpdatedDay = `Day ${updated.travelDaysTotal || 1}`;
+    });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.savePartyLocation(this.activeGameId || 'demo', updated);
+    }
+    this.saveData();
+    return { success: true, partyLocation: updated, travel };
+  }
+
+  // ==========================================
+  // PRINTABLE 5.5e CHARACTER SHEET & JSON EXPORT
+  // ==========================================
+  exportCharacterJson(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    return JSON.stringify(char, null, 2);
+  }
+
+  generatePrintableSheetHtml(charId) {
+    const c = (this.data.partyCharacters || []).find(ch => ch.id === charId);
+    if (!c) return '';
+    const getMod = (v) => {
+      const m = Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+      return m >= 0 ? `+${m}` : `${m}`;
+    };
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${c.name} — D&D 5.5e Character Sheet</title>
+      <style>body{font-family:Georgia,serif;color:#111;max-width:820px;margin:24px auto;padding:0 20px;}
+      h1{margin:0;border-bottom:2px solid #9a7b2c;padding-bottom:6px;} .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:14px 0;text-align:center;}
+      .box{border:1px solid #333;border-radius:6px;padding:8px;} .vitals{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0;text-align:center;}
+      .sec{margin-top:14px;border-top:1px solid #ccc;padding-top:8px;} @media print{.no-print{display:none;}}</style></head>
+      <body><div class="no-print" style="text-align:right;margin-bottom:10px;"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+      <h1>${c.name} <span style="font-size:0.65em;font-weight:normal;">(Level ${c.level || 1} ${c.species} ${c.classRole})</span></h1>
+      <div style="font-size:0.9em;color:#444;margin-top:4px;">Player: ${c.playerName || 'Adventurer'} • Alignment: ${c.alignment || 'Neutral'} • Background: ${c.background || 'Wayfarer'}</div>
+      <div class="vitals">
+        <div class="box"><strong>HP</strong><br>${c.hpCurrent}/${c.hpMax}</div>
+        <div class="box"><strong>AC</strong><br>${c.ac}</div>
+        <div class="box"><strong>Initiative</strong><br>${c.initiativeMod || '+0'}</div>
+        <div class="box"><strong>Speed</strong><br>${c.speed || '30 ft'}</div>
+      </div>
+      <div class="grid">${['str','dex','con','int','wis','cha'].map(s => `<div class="box"><strong>${s.toUpperCase()}</strong><br>${c.stats?.[s] || 10} (${getMod(c.stats?.[s])})</div>`).join('')}</div>
+      <div class="sec"><strong>Feats &amp; Features:</strong> ${(c.feats || []).concat(c.features || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>Known Spells:</strong> ${(c.spells || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>5.5e Weapon Masteries:</strong> ${(c.weaponMasteries || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>Equipment:</strong> ${(c.inventoryItems || []).map(i => `${i.name}${i.equipped ? ' [Equipped]' : ''}`).join(', ') || (c.equipment || []).join(', ') || 'Standard Pack'}</div>
+      </body></html>`;
   }
 
   notify() {
@@ -4560,6 +4746,23 @@ function initMapInteractivity(container) {
       pinsLayer.appendChild(pinG);
     });
 
+    // Live World Map Party Token (Synced with Supabase)
+    const partyLoc = worldState.getPartyLocation ? worldState.getPartyLocation() : null;
+    if (partyLoc) {
+      const activeReg = (worldState.data.regions || []).find(r => r.id === partyLoc.regionId);
+      if (activeReg) {
+        const pCoords = regionCoords[activeReg.id] || (activeReg.coordinates ? { x: activeReg.coordinates.x * 10, y: activeReg.coordinates.y * 5.6 } : { x: 500, y: 280 });
+        const partyG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        partyG.setAttribute('id', 'world-map-party-token');
+        partyG.setAttribute('transform', `translate(${pCoords.x + 24}, ${pCoords.y - 22})`);
+        partyG.innerHTML = `
+          <circle cx="0" cy="0" r="13" fill="#0284c7" stroke="#fde047" stroke-width="2.5" />
+          <text x="0" y="4" font-size="11" text-anchor="middle" fill="#fff">🧭</text>
+        `;
+        pinsLayer.appendChild(partyG);
+      }
+    }
+
     // Precise dynamic autosizing for all pin label containers based on rendered text dimensions
     function autoSizePinLabels() {
       pinsLayer.querySelectorAll('.map-pin').forEach(pin => {
@@ -4624,7 +4827,30 @@ function initMapInteractivity(container) {
       `;
     }
 
+    // Party Travel Calculator & Move Party Here (Supabase)
+    if (typeof worldState.getPartyLocation === 'function') {
+      const curLoc = worldState.getPartyLocation();
+      const travel = worldState.calculateTravel(curLoc.regionId, region.id, 'normal');
+      const isHere = curLoc.regionId === region.id;
+      html += `
+        <div style="margin-top: 0.85rem; padding: 0.75rem; background: rgba(2, 132, 199, 0.12); border: 1px solid rgba(56, 189, 248, 0.45); border-radius: 6px;">
+          <div style="font-weight: bold; font-size: 0.82rem; color: #0369a1; margin-bottom: 0.3rem;">🧭 Party Location &amp; Travel Calculator</div>
+          ${isHere
+            ? `<div style="font-size: 0.8rem; color: #0c4a6e;">The party is currently camped in <strong>${region.name}</strong> (Day ${curLoc.travelDaysTotal || 1}).</div>`
+            : `<div style="font-size: 0.8rem; color: #0c4a6e; margin-bottom: 0.5rem;">From <strong>${curLoc.regionName}</strong>: ~<strong>${travel.distanceMiles} miles</strong> (${travel.travelDays} day${travel.travelDays === 1 ? '' : 's'} at Normal pace, ${travel.rationsNeeded} rations).</div>
+               <button type="button" class="btn btn-sm btn-primary" id="btn-move-party-here" data-region-id="${region.id}" style="width: 100%;">🧭 Move Party Here (+${travel.travelDays}d)</button>`
+          }
+        </div>
+      `;
+    }
+
     flyoutBody.innerHTML = html;
+
+    flyoutBody.querySelector('#btn-move-party-here')?.addEventListener('click', async () => {
+      await worldState.movePartyToRegion(region.id, 'normal');
+      renderPins();
+      openFlyout(region);
+    });
     flyout.classList.add('open');
   }
 
@@ -7339,7 +7565,10 @@ function renderPartyView(container) {
       <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
           <strong style="color: #7dd3fc; font-size: 0.9rem;">📜 Session Recaps &amp; Auto-Chronicle</strong>
-          <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+          <div style="display: flex; gap: 0.3rem;">
+            ${prefs.dmMode ? `<button class="btn btn-sm" id="party-send-handout-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #c084fc; color: #d8b4fe;">📬 Send Clue</button>` : ''}
+            <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+          </div>
         </div>
         <div id="party-recaps-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem; max-height: 180px; overflow-y: auto;"></div>
       </div>
@@ -8011,6 +8240,15 @@ function renderPartyView(container) {
     renderLootAndRecaps();
   });
 
+  container.querySelector('#party-send-handout-btn')?.addEventListener('click', async () => {
+    const title = prompt('Handout / Secret Clue Title:', 'Torn Obsidian Letter');
+    if (!title) return;
+    const content = prompt('Clue Content:', 'Meet beneath the Foregrove roots at midnight. Bring the rune key.');
+    if (!content) return;
+    await worldState.sendHandout({ title, content, targetCharId: 'ALL', targetLabel: 'All Players' });
+    alert(`Handout "${title}" sent to the party via Supabase!`);
+  });
+
   // Party Gold Controls
   if (goldAddBtn) {
     goldAddBtn.addEventListener('click', () => {
@@ -8563,6 +8801,8 @@ function renderHeroView(container) {
           </select>
         ` : ''}
         <button class="btn btn-sm" id="btn-hero-level-up" style="background: rgba(212, 175, 55, 0.22); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up Character (Roll HP, Features, Feats & Spells)">⬆ Level Up</button>
+        <button class="btn btn-sm" id="btn-hero-print-sheet" title="Open Printable / PDF D&D 5.5e Character Sheet">🖨️ Print Sheet</button>
+        <button class="btn btn-sm" id="btn-hero-export-json" title="Download Hero Backup JSON">💾 JSON</button>
         <button class="btn btn-sm" id="btn-hero-short-rest" title="Take Short Rest">Short Rest</button>
         <button class="btn btn-sm btn-primary" id="btn-hero-long-rest" title="Take Long Rest">Long Rest</button>
         <button class="btn btn-sm" id="btn-hero-view-map" title="View Current Location on World Map">Map</button>
@@ -8755,6 +8995,24 @@ function renderHeroView(container) {
 
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
+
+          <!-- DM Handouts & Secret Clues Drawer (Supabase) -->
+          ${(worldState.getHandouts && worldState.getHandouts(activeHero.id).length > 0) ? `
+            <div style="margin-top: 1rem; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: var(--radius-md); padding: 0.75rem;">
+              <strong style="color: #d8b4fe; font-size: 0.85rem;">📬 DM Handouts &amp; Secret Clues</strong>
+              <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem;">
+                ${worldState.getHandouts(activeHero.id).slice(0, 5).map(h => `
+                  <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.45rem 0.6rem; font-size: 0.78rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <strong style="color: var(--text-gold);">${h.title}</strong>
+                      <span style="font-size: 0.66rem; color: #c084fc;">${h.targetCharId === 'ALL' ? 'Party' : 'Private'}</span>
+                    </div>
+                    <div style="color: var(--text-secondary); margin-top: 0.2rem;">${h.content}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
 
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
@@ -8962,6 +9220,22 @@ function renderHeroView(container) {
       openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
+
+  // Printable Sheet & Hero JSON Export
+  container.querySelector('#btn-hero-print-sheet')?.addEventListener('click', () => {
+    const html = worldState.generatePrintableSheetHtml(activeHero.id);
+    const w = window.open('', '_blank', 'width=880,height=720');
+    if (w) { w.document.write(html); w.document.close(); }
+  });
+  container.querySelector('#btn-hero-export-json')?.addEventListener('click', () => {
+    const json = worldState.exportCharacterJson(activeHero.id);
+    if (!json) return;
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(activeHero.name || 'hero').toLowerCase().replace(/[^a-z0-9]+/g, '_')}_5_5e.json`;
+    a.click();
+  });
 
   // Death Saving Throws & Stabilize Handlers
   container.querySelector('#btn-hero-death-save')?.addEventListener('click', () => {
@@ -10033,6 +10307,7 @@ function renderCombatView(container) {
               <button class="combat-act-btn" data-action="ATTACK">Attack</button>
               <button class="combat-act-btn" data-action="CAST">Spell / Ability</button>
               <button class="combat-act-btn" data-action="PING">Ping</button>
+              <button class="combat-act-btn" data-action="RULER" style="grid-column: span 2;">📏 Distance Ruler &amp; Line of Sight</button>
             </div>
 
             <!-- Spell / Ability Selector (populated per unit) -->
@@ -10314,6 +10589,7 @@ function initCombatEngine(container) {
     terrain: {},
     fogOfWar: {},
     mapImageUrl: null,
+    rulerOrigin: null,
     hoveredTile: null,
     dmPingVis: 'ALL',
     dmPingRecipients: [],
@@ -10682,6 +10958,19 @@ function initCombatEngine(container) {
       if (cState.selectedAction === 'PING') {
         cState.selectedAction = null;
         updateActionUi();
+      }
+      return;
+    }
+
+    // Distance Ruler & Line-of-Sight Measurement
+    if (cState.selectedAction === 'RULER') {
+      if (!cState.rulerOrigin) {
+        cState.rulerOrigin = { x: gx, y: gy };
+        notifyToast(`Ruler origin set at (${gx}, ${gy}). Hover or click target tile.`);
+      } else {
+        const res = measureDistance(cState.rulerOrigin, { x: gx, y: gy });
+        notifyToast(`📏 ${res.feet} ft (${res.tiles} tiles) — ${res.hasLoS ? 'Clear Line of Sight' : 'BLOCKED BY WALL'}`);
+        cState.rulerOrigin = null;
       }
       return;
     }
@@ -12266,6 +12555,37 @@ function initCombatEngine(container) {
     persistCombatToCloud();
   }
 
+  // Distance Ruler, Bresenham Line-of-Sight & Wall/Difficult Terrain Movement Rules
+  function hasLineOfSight(x0, y0, x1, y1) {
+    let cx = x0, cy = y0;
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    while (!(cx === x1 && cy === y1)) {
+      if (!(cx === x0 && cy === y0) && cState.terrain[`${cx},${cy}`] === 'wall') {
+        return false;
+      }
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
+    }
+    return true;
+  }
+
+  function measureDistance(a, b) {
+    const tiles = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    const hasLoS = hasLineOfSight(a.x, a.y, b.x, b.y);
+    return { tiles, feet: tiles * 5, hasLoS };
+  }
+
+  function getMoveCost(actor, gx, gy) {
+    const key = `${gx},${gy}`;
+    if (cState.terrain[key] === 'wall') return Infinity;
+    const baseDist = Math.max(Math.abs(actor.x - gx), Math.abs(actor.y - gy));
+    if (!hasLineOfSight(actor.x, actor.y, gx, gy)) return Infinity;
+    return cState.terrain[key] === 'difficult' ? baseDist * 2 : baseDist;
+  }
+
   function persistCombatToCloud() {
     const snapshot = {
       gridSize: cState.gridSize,
@@ -12541,17 +12861,45 @@ function initCombatEngine(container) {
       ctx.stroke();
     }
 
-    // Move range highlight
+    // Move range highlight (respects Walls & Difficult Terrain)
     if (cState.selectedEntity && cState.selectedAction === 'MOVE') {
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
       for (let x = 0; x < cState.gridSize; x++) {
         for (let y = 0; y < cState.gridSize; y++) {
-          const d = Math.max(Math.abs(cState.selectedEntity.x - x), Math.abs(cState.selectedEntity.y - y));
-          if (d <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
+          const cost = getMoveCost(cState.selectedEntity, x, y);
+          if (cost <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
+            ctx.fillStyle = cState.terrain[`${x},${y}`] === 'difficult' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(59, 130, 246, 0.2)';
             ctx.fillRect(x * ts, y * ts, ts, ts);
           }
         }
       }
+    }
+
+    // Distance Ruler & Line-of-Sight Overlay
+    if (cState.selectedAction === 'RULER' && cState.rulerOrigin && cState.hoveredTile) {
+      const a = cState.rulerOrigin;
+      const b = cState.hoveredTile;
+      const m = measureDistance(a, b);
+      const ax = a.x * ts + ts / 2, ay = a.y * ts + ts / 2;
+      const bx = b.x * ts + ts / 2, by = b.y * ts + ts / 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([6, 4]);
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.strokeStyle = m.hasLoS ? '#fde047' : '#ef4444';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const midX = (ax + bx) / 2, midY = (ay + by) / 2;
+      const label = `${m.feet} ft${m.hasLoS ? '' : ' (BLOCKED)'}`;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(midX - 42, midY - 11, 84, 20);
+      ctx.fillStyle = m.hasLoS ? '#fde047' : '#fca5a5';
+      ctx.font = 'bold 11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, midX, midY - 1);
+      ctx.restore();
     }
 
     // Spell / Ability Targeting & AoE Radius Preview
@@ -12893,6 +13241,9 @@ function initCombatEngine(container) {
     loadEncounterPresetById,
     getConditionCombatEffects,
     checkConcentrationSave,
+    hasLineOfSight,
+    measureDistance,
+    getMoveCost,
     dist,
     logMsg
   };
@@ -13906,7 +14257,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.6';
+    window.APP_VERSION = '1.7';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

@@ -57,7 +57,10 @@ export function renderPartyView(container) {
       <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
           <strong style="color: #7dd3fc; font-size: 0.9rem;">📜 Session Recaps &amp; Auto-Chronicle</strong>
-          <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+          <div style="display: flex; gap: 0.3rem;">
+            ${prefs.dmMode ? `<button class="btn btn-sm" id="party-send-handout-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #c084fc; color: #d8b4fe;">📬 Send Clue</button>` : ''}
+            <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+          </div>
         </div>
         <div id="party-recaps-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem; max-height: 180px; overflow-y: auto;"></div>
       </div>
@@ -727,6 +730,15 @@ export function renderPartyView(container) {
   container.querySelector('#party-gen-recap-btn')?.addEventListener('click', async () => {
     await worldState.generateSessionRecap();
     renderLootAndRecaps();
+  });
+
+  container.querySelector('#party-send-handout-btn')?.addEventListener('click', async () => {
+    const title = prompt('Handout / Secret Clue Title:', 'Torn Obsidian Letter');
+    if (!title) return;
+    const content = prompt('Clue Content:', 'Meet beneath the Foregrove roots at midnight. Bring the rune key.');
+    if (!content) return;
+    await worldState.sendHandout({ title, content, targetCharId: 'ALL', targetLabel: 'All Players' });
+    alert(`Handout "${title}" sent to the party via Supabase!`);
   });
 
   // Party Gold Controls

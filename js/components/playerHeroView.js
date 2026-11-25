@@ -295,6 +295,8 @@ export function renderHeroView(container) {
           </select>
         ` : ''}
         <button class="btn btn-sm" id="btn-hero-level-up" style="background: rgba(212, 175, 55, 0.22); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up Character (Roll HP, Features, Feats & Spells)">⬆ Level Up</button>
+        <button class="btn btn-sm" id="btn-hero-print-sheet" title="Open Printable / PDF D&D 5.5e Character Sheet">🖨️ Print Sheet</button>
+        <button class="btn btn-sm" id="btn-hero-export-json" title="Download Hero Backup JSON">💾 JSON</button>
         <button class="btn btn-sm" id="btn-hero-short-rest" title="Take Short Rest">Short Rest</button>
         <button class="btn btn-sm btn-primary" id="btn-hero-long-rest" title="Take Long Rest">Long Rest</button>
         <button class="btn btn-sm" id="btn-hero-view-map" title="View Current Location on World Map">Map</button>
@@ -487,6 +489,24 @@ export function renderHeroView(container) {
 
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
+
+          <!-- DM Handouts & Secret Clues Drawer (Supabase) -->
+          ${(worldState.getHandouts && worldState.getHandouts(activeHero.id).length > 0) ? `
+            <div style="margin-top: 1rem; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: var(--radius-md); padding: 0.75rem;">
+              <strong style="color: #d8b4fe; font-size: 0.85rem;">📬 DM Handouts &amp; Secret Clues</strong>
+              <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem;">
+                ${worldState.getHandouts(activeHero.id).slice(0, 5).map(h => `
+                  <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.45rem 0.6rem; font-size: 0.78rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <strong style="color: var(--text-gold);">${h.title}</strong>
+                      <span style="font-size: 0.66rem; color: #c084fc;">${h.targetCharId === 'ALL' ? 'Party' : 'Private'}</span>
+                    </div>
+                    <div style="color: var(--text-secondary); margin-top: 0.2rem;">${h.content}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
 
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
@@ -694,6 +714,22 @@ export function renderHeroView(container) {
       openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
+
+  // Printable Sheet & Hero JSON Export
+  container.querySelector('#btn-hero-print-sheet')?.addEventListener('click', () => {
+    const html = worldState.generatePrintableSheetHtml(activeHero.id);
+    const w = window.open('', '_blank', 'width=880,height=720');
+    if (w) { w.document.write(html); w.document.close(); }
+  });
+  container.querySelector('#btn-hero-export-json')?.addEventListener('click', () => {
+    const json = worldState.exportCharacterJson(activeHero.id);
+    if (!json) return;
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(activeHero.name || 'hero').toLowerCase().replace(/[^a-z0-9]+/g, '_')}_5_5e.json`;
+    a.click();
+  });
 
   // Death Saving Throws & Stabilize Handlers
   container.querySelector('#btn-hero-death-save')?.addEventListener('click', () => {

@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.6';
+    this.version = '1.7';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -276,12 +276,13 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
-        supabaseDb.fetchSessionRecaps(targetId)
+        supabaseDb.fetchSessionRecaps(targetId),
+        supabaseDb.fetchCampaignHandouts(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -289,6 +290,7 @@ class WorldStateManager {
         if (Array.isArray(remoteMonsters)) this.data.customMonsters = remoteMonsters;
         if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
+        if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -869,6 +871,140 @@ class WorldStateManager {
     }
     this.saveData();
     return { success: true, recap };
+  }
+
+  // ==========================================
+  // DM HANDOUTS & PRIVATE CLUE SHARING
+  // ==========================================
+  getHandouts(forCharId = null) {
+    if (!Array.isArray(this.data.campaignHandouts)) this.data.campaignHandouts = [];
+    if (!forCharId || this.prefs.dmMode) return this.data.campaignHandouts;
+    return this.data.campaignHandouts.filter(h => h.targetCharId === 'ALL' || h.targetCharId === forCharId);
+  }
+
+  async sendHandout({ title, content, imageUrl = null, targetCharId = 'ALL', targetLabel = 'All Players' }) {
+    if (!Array.isArray(this.data.campaignHandouts)) this.data.campaignHandouts = [];
+    const handout = {
+      id: 'ho_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: (title || 'Secret Clue').trim(),
+      content: (content || '').trim(),
+      imageUrl: imageUrl || null,
+      targetCharId: targetCharId || 'ALL',
+      targetLabel: targetLabel || (targetCharId === 'ALL' ? 'All Players' : targetCharId),
+      senderName: 'Dungeon Master',
+      createdAt: Date.now()
+    };
+    this.data.campaignHandouts.unshift(handout);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCampaignHandout(this.activeGameId || 'demo', handout);
+    }
+    this.saveData(true);
+    return { success: true, handout };
+  }
+
+  async deleteHandout(handoutId) {
+    this.data.campaignHandouts = this.getHandouts().filter(h => h.id !== handoutId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteCampaignHandout(handoutId);
+    }
+    this.saveData(true);
+  }
+
+  // ==========================================
+  // WORLD MAP PARTY TRACKER & TRAVEL CALCULATOR
+  // ==========================================
+  getPartyLocation() {
+    if (!this.data.partyLocation) {
+      const firstReg = (this.data.regions || [])[0];
+      this.data.partyLocation = {
+        regionId: firstReg ? firstReg.id : 'region-foregrove',
+        regionName: firstReg ? firstReg.name : 'The Foregrove Canopy',
+        travelDaysTotal: 0
+      };
+    }
+    return this.data.partyLocation;
+  }
+
+  calculateTravel(fromRegionId, toRegionId, pace = 'normal') {
+    const regions = this.data.regions || [];
+    const fromR = regions.find(r => r.id === fromRegionId) || regions[0];
+    const toR = regions.find(r => r.id === toRegionId);
+    if (!fromR || !toR || fromR.id === toR.id) {
+      return { distanceMiles: 0, travelDays: 0, rationsNeeded: 0, pace };
+    }
+    const fromX = (fromR.coordinates?.x ?? 50) * 10;
+    const fromY = (fromR.coordinates?.y ?? 50) * 5.6;
+    const toX = (toR.coordinates?.x ?? 50) * 10;
+    const toY = (toR.coordinates?.y ?? 50) * 5.6;
+    const pxDist = Math.hypot(toX - fromX, toY - fromY);
+    const distanceMiles = Math.max(6, Math.round(pxDist * 0.45));
+    const milesPerDay = pace === 'fast' ? 30 : (pace === 'slow' ? 18 : 24);
+    const travelDays = Math.max(1, Math.ceil(distanceMiles / milesPerDay));
+    const partyCount = Math.max(1, (this.data.partyCharacters || []).length);
+    return { distanceMiles, travelDays, rationsNeeded: travelDays * partyCount, pace };
+  }
+
+  async movePartyToRegion(regionId, pace = 'normal') {
+    const target = (this.data.regions || []).find(r => r.id === regionId);
+    if (!target) return { success: false, error: 'Region not found' };
+    const current = this.getPartyLocation();
+    const travel = this.calculateTravel(current.regionId, regionId, pace);
+    const updated = {
+      regionId: target.id,
+      regionName: target.name,
+      travelDaysTotal: (current.travelDaysTotal || 0) + travel.travelDays,
+      lastMove: { from: current.regionName, to: target.name, ...travel, timestamp: Date.now() }
+    };
+    this.data.partyLocation = updated;
+    // Sync every hero's Current World Location Radar
+    (this.data.partyCharacters || []).forEach(c => {
+      if (!c.currentSituation) c.currentSituation = {};
+      c.currentSituation.locationName = target.name;
+      c.currentSituation.lastUpdatedDay = `Day ${updated.travelDaysTotal || 1}`;
+    });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.savePartyLocation(this.activeGameId || 'demo', updated);
+    }
+    this.saveData();
+    return { success: true, partyLocation: updated, travel };
+  }
+
+  // ==========================================
+  // PRINTABLE 5.5e CHARACTER SHEET & JSON EXPORT
+  // ==========================================
+  exportCharacterJson(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    return JSON.stringify(char, null, 2);
+  }
+
+  generatePrintableSheetHtml(charId) {
+    const c = (this.data.partyCharacters || []).find(ch => ch.id === charId);
+    if (!c) return '';
+    const getMod = (v) => {
+      const m = Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+      return m >= 0 ? `+${m}` : `${m}`;
+    };
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${c.name} — D&D 5.5e Character Sheet</title>
+      <style>body{font-family:Georgia,serif;color:#111;max-width:820px;margin:24px auto;padding:0 20px;}
+      h1{margin:0;border-bottom:2px solid #9a7b2c;padding-bottom:6px;} .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:14px 0;text-align:center;}
+      .box{border:1px solid #333;border-radius:6px;padding:8px;} .vitals{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0;text-align:center;}
+      .sec{margin-top:14px;border-top:1px solid #ccc;padding-top:8px;} @media print{.no-print{display:none;}}</style></head>
+      <body><div class="no-print" style="text-align:right;margin-bottom:10px;"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+      <h1>${c.name} <span style="font-size:0.65em;font-weight:normal;">(Level ${c.level || 1} ${c.species} ${c.classRole})</span></h1>
+      <div style="font-size:0.9em;color:#444;margin-top:4px;">Player: ${c.playerName || 'Adventurer'} • Alignment: ${c.alignment || 'Neutral'} • Background: ${c.background || 'Wayfarer'}</div>
+      <div class="vitals">
+        <div class="box"><strong>HP</strong><br>${c.hpCurrent}/${c.hpMax}</div>
+        <div class="box"><strong>AC</strong><br>${c.ac}</div>
+        <div class="box"><strong>Initiative</strong><br>${c.initiativeMod || '+0'}</div>
+        <div class="box"><strong>Speed</strong><br>${c.speed || '30 ft'}</div>
+      </div>
+      <div class="grid">${['str','dex','con','int','wis','cha'].map(s => `<div class="box"><strong>${s.toUpperCase()}</strong><br>${c.stats?.[s] || 10} (${getMod(c.stats?.[s])})</div>`).join('')}</div>
+      <div class="sec"><strong>Feats &amp; Features:</strong> ${(c.feats || []).concat(c.features || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>Known Spells:</strong> ${(c.spells || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>5.5e Weapon Masteries:</strong> ${(c.weaponMasteries || []).join(', ') || 'None'}</div>
+      <div class="sec"><strong>Equipment:</strong> ${(c.inventoryItems || []).map(i => `${i.name}${i.equipped ? ' [Equipped]' : ''}`).join(', ') || (c.equipment || []).join(', ') || 'Standard Pack'}</div>
+      </body></html>`;
   }
 
   notify() {

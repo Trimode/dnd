@@ -85,6 +85,7 @@ export function renderCombatView(container) {
               <button class="combat-act-btn" data-action="ATTACK">Attack</button>
               <button class="combat-act-btn" data-action="CAST">Spell / Ability</button>
               <button class="combat-act-btn" data-action="PING">Ping</button>
+              <button class="combat-act-btn" data-action="RULER" style="grid-column: span 2;">📏 Distance Ruler &amp; Line of Sight</button>
             </div>
 
             <!-- Spell / Ability Selector (populated per unit) -->
@@ -366,6 +367,7 @@ function initCombatEngine(container) {
     terrain: {},
     fogOfWar: {},
     mapImageUrl: null,
+    rulerOrigin: null,
     hoveredTile: null,
     dmPingVis: 'ALL',
     dmPingRecipients: [],
@@ -734,6 +736,19 @@ function initCombatEngine(container) {
       if (cState.selectedAction === 'PING') {
         cState.selectedAction = null;
         updateActionUi();
+      }
+      return;
+    }
+
+    // Distance Ruler & Line-of-Sight Measurement
+    if (cState.selectedAction === 'RULER') {
+      if (!cState.rulerOrigin) {
+        cState.rulerOrigin = { x: gx, y: gy };
+        notifyToast(`Ruler origin set at (${gx}, ${gy}). Hover or click target tile.`);
+      } else {
+        const res = measureDistance(cState.rulerOrigin, { x: gx, y: gy });
+        notifyToast(`📏 ${res.feet} ft (${res.tiles} tiles) — ${res.hasLoS ? 'Clear Line of Sight' : 'BLOCKED BY WALL'}`);
+        cState.rulerOrigin = null;
       }
       return;
     }
@@ -2318,6 +2333,37 @@ function initCombatEngine(container) {
     persistCombatToCloud();
   }
 
+  // Distance Ruler, Bresenham Line-of-Sight & Wall/Difficult Terrain Movement Rules
+  function hasLineOfSight(x0, y0, x1, y1) {
+    let cx = x0, cy = y0;
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    while (!(cx === x1 && cy === y1)) {
+      if (!(cx === x0 && cy === y0) && cState.terrain[`${cx},${cy}`] === 'wall') {
+        return false;
+      }
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
+    }
+    return true;
+  }
+
+  function measureDistance(a, b) {
+    const tiles = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    const hasLoS = hasLineOfSight(a.x, a.y, b.x, b.y);
+    return { tiles, feet: tiles * 5, hasLoS };
+  }
+
+  function getMoveCost(actor, gx, gy) {
+    const key = `${gx},${gy}`;
+    if (cState.terrain[key] === 'wall') return Infinity;
+    const baseDist = Math.max(Math.abs(actor.x - gx), Math.abs(actor.y - gy));
+    if (!hasLineOfSight(actor.x, actor.y, gx, gy)) return Infinity;
+    return cState.terrain[key] === 'difficult' ? baseDist * 2 : baseDist;
+  }
+
   function persistCombatToCloud() {
     const snapshot = {
       gridSize: cState.gridSize,
@@ -2593,17 +2639,45 @@ function initCombatEngine(container) {
       ctx.stroke();
     }
 
-    // Move range highlight
+    // Move range highlight (respects Walls & Difficult Terrain)
     if (cState.selectedEntity && cState.selectedAction === 'MOVE') {
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
       for (let x = 0; x < cState.gridSize; x++) {
         for (let y = 0; y < cState.gridSize; y++) {
-          const d = Math.max(Math.abs(cState.selectedEntity.x - x), Math.abs(cState.selectedEntity.y - y));
-          if (d <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
+          const cost = getMoveCost(cState.selectedEntity, x, y);
+          if (cost <= cState.selectedEntity.movementLeft && !cState.entities.find(e => e.x === x && e.y === y && e.hp > 0)) {
+            ctx.fillStyle = cState.terrain[`${x},${y}`] === 'difficult' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(59, 130, 246, 0.2)';
             ctx.fillRect(x * ts, y * ts, ts, ts);
           }
         }
       }
+    }
+
+    // Distance Ruler & Line-of-Sight Overlay
+    if (cState.selectedAction === 'RULER' && cState.rulerOrigin && cState.hoveredTile) {
+      const a = cState.rulerOrigin;
+      const b = cState.hoveredTile;
+      const m = measureDistance(a, b);
+      const ax = a.x * ts + ts / 2, ay = a.y * ts + ts / 2;
+      const bx = b.x * ts + ts / 2, by = b.y * ts + ts / 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([6, 4]);
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.strokeStyle = m.hasLoS ? '#fde047' : '#ef4444';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const midX = (ax + bx) / 2, midY = (ay + by) / 2;
+      const label = `${m.feet} ft${m.hasLoS ? '' : ' (BLOCKED)'}`;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(midX - 42, midY - 11, 84, 20);
+      ctx.fillStyle = m.hasLoS ? '#fde047' : '#fca5a5';
+      ctx.font = 'bold 11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, midX, midY - 1);
+      ctx.restore();
     }
 
     // Spell / Ability Targeting & AoE Radius Preview
@@ -2945,6 +3019,9 @@ function initCombatEngine(container) {
     loadEncounterPresetById,
     getConditionCombatEffects,
     checkConcentrationSave,
+    hasLineOfSight,
+    measureDistance,
+    getMoveCost,
     dist,
     logMsg
   };

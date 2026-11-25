@@ -188,6 +188,23 @@ function initMapInteractivity(container) {
       pinsLayer.appendChild(pinG);
     });
 
+    // Live World Map Party Token (Synced with Supabase)
+    const partyLoc = worldState.getPartyLocation ? worldState.getPartyLocation() : null;
+    if (partyLoc) {
+      const activeReg = (worldState.data.regions || []).find(r => r.id === partyLoc.regionId);
+      if (activeReg) {
+        const pCoords = regionCoords[activeReg.id] || (activeReg.coordinates ? { x: activeReg.coordinates.x * 10, y: activeReg.coordinates.y * 5.6 } : { x: 500, y: 280 });
+        const partyG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        partyG.setAttribute('id', 'world-map-party-token');
+        partyG.setAttribute('transform', `translate(${pCoords.x + 24}, ${pCoords.y - 22})`);
+        partyG.innerHTML = `
+          <circle cx="0" cy="0" r="13" fill="#0284c7" stroke="#fde047" stroke-width="2.5" />
+          <text x="0" y="4" font-size="11" text-anchor="middle" fill="#fff">🧭</text>
+        `;
+        pinsLayer.appendChild(partyG);
+      }
+    }
+
     // Precise dynamic autosizing for all pin label containers based on rendered text dimensions
     function autoSizePinLabels() {
       pinsLayer.querySelectorAll('.map-pin').forEach(pin => {
@@ -252,7 +269,30 @@ function initMapInteractivity(container) {
       `;
     }
 
+    // Party Travel Calculator & Move Party Here (Supabase)
+    if (typeof worldState.getPartyLocation === 'function') {
+      const curLoc = worldState.getPartyLocation();
+      const travel = worldState.calculateTravel(curLoc.regionId, region.id, 'normal');
+      const isHere = curLoc.regionId === region.id;
+      html += `
+        <div style="margin-top: 0.85rem; padding: 0.75rem; background: rgba(2, 132, 199, 0.12); border: 1px solid rgba(56, 189, 248, 0.45); border-radius: 6px;">
+          <div style="font-weight: bold; font-size: 0.82rem; color: #0369a1; margin-bottom: 0.3rem;">🧭 Party Location &amp; Travel Calculator</div>
+          ${isHere
+            ? `<div style="font-size: 0.8rem; color: #0c4a6e;">The party is currently camped in <strong>${region.name}</strong> (Day ${curLoc.travelDaysTotal || 1}).</div>`
+            : `<div style="font-size: 0.8rem; color: #0c4a6e; margin-bottom: 0.5rem;">From <strong>${curLoc.regionName}</strong>: ~<strong>${travel.distanceMiles} miles</strong> (${travel.travelDays} day${travel.travelDays === 1 ? '' : 's'} at Normal pace, ${travel.rationsNeeded} rations).</div>
+               <button type="button" class="btn btn-sm btn-primary" id="btn-move-party-here" data-region-id="${region.id}" style="width: 100%;">🧭 Move Party Here (+${travel.travelDays}d)</button>`
+          }
+        </div>
+      `;
+    }
+
     flyoutBody.innerHTML = html;
+
+    flyoutBody.querySelector('#btn-move-party-here')?.addEventListener('click', async () => {
+      await worldState.movePartyToRegion(region.id, 'normal');
+      renderPins();
+      openFlyout(region);
+    });
     flyout.classList.add('open');
   }
 

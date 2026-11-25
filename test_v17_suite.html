@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v1.7 Tests: Ruler/LoS/Walls, Handouts, Printable Sheet & Map Travel</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+  <div id="combat-mount" style="display: none;"></div>
+  <div id="map-mount" style="display: none;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.7"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Battlemat Distance Ruler, Line-of-Sight & Wall/Difficult Terrain Rules
+        const mount = document.getElementById('combat-mount');
+        renderCombatView(mount);
+        const ctrl = mount._combatController;
+
+        const openDist = ctrl.measureDistance({ x: 1, y: 1 }, { x: 6, y: 1 });
+        assert(openDist.tiles === 5 && openDist.feet === 25 && openDist.hasLoS === true, "Ruler measures 25 ft (5 tiles) with clear Line of Sight");
+
+        ctrl.setTerrainTile(3, 1, 'wall');
+        const blockedDist = ctrl.measureDistance({ x: 1, y: 1 }, { x: 6, y: 1 });
+        assert(blockedDist.hasLoS === false, "Bresenham Line of Sight accurately detects blocking Wall at (3,1)");
+
+        const wallCost = ctrl.getMoveCost({ x: 2, y: 1 }, 3, 1);
+        assert(wallCost === Infinity, "Wall tile (3,1) blocks movement (cost = Infinity)");
+
+        ctrl.setTerrainTile(2, 2, 'difficult');
+        const diffCost = ctrl.getMoveCost({ x: 2, y: 1 }, 2, 2);
+        assert(diffCost === 2, "Difficult Terrain doubles movement cost (1 tile = 2 cost)");
+
+        // 2. DM Handouts & Private Clue Sharing
+        const h1 = await worldState.sendHandout({
+          title: 'Cryptic Cipher',
+          content: 'The key lies under the third root.',
+          targetCharId: 'pc-1',
+          targetLabel: 'Theron'
+        });
+        assert(h1.success && h1.handout.title === 'Cryptic Cipher', "Private DM Handout created");
+
+        worldState.setDmMode(false);
+        const theronHandouts = worldState.getHandouts('pc-1');
+        const otherHandouts = worldState.getHandouts('pc-other');
+        assert(theronHandouts.some(h => h.title === 'Cryptic Cipher'), "Target hero receives private handout");
+        assert(!otherHandouts.some(h => h.title === 'Cryptic Cipher'), "Non-target hero cannot see private handout");
+        worldState.setDmMode(true);
+
+        // 3. Printable 5.5e Character Sheet & JSON Backup Export
+        const hero = (worldState.data.partyCharacters || [])[0];
+        const jsonOut = worldState.exportCharacterJson(hero.id);
+        assert(typeof jsonOut === 'string' && JSON.parse(jsonOut).id === hero.id, "exportCharacterJson produces valid hero JSON");
+        const printHtml = worldState.generatePrintableSheetHtml(hero.id);
+        assert(printHtml.includes(hero.name) && printHtml.includes('window.print()'), "generatePrintableSheetHtml renders clean printable 5.5e sheet");
+
+        // 4. World Map Party Tracker & Travel Calculator
+        const regions = worldState.data.regions || [];
+        assert(regions.length >= 2, "World regions available for travel test");
+        const travel = worldState.calculateTravel(regions[0].id, regions[1].id, 'normal');
+        assert(travel.distanceMiles > 0 && travel.travelDays >= 1 && travel.rationsNeeded >= 1, "Travel calculator computes miles (" + travel.distanceMiles + "), days (" + travel.travelDays + "), rations (" + travel.rationsNeeded + ")");
+
+        const moveRes = await worldState.movePartyToRegion(regions[1].id, 'normal');
+        assert(moveRes.success && worldState.getPartyLocation().regionId === regions[1].id, "movePartyToRegion updates party location to " + regions[1].name);
+        assert(hero.currentSituation && hero.currentSituation.locationName === regions[1].name, "Moving party syncs hero Current Location Radar");
+
+        const mapMount = document.getElementById('map-mount');
+        renderMapView(mapMount);
+        assert(mapMount.querySelector('#world-map-party-token') !== null, "Live Party Token rendered on World Map SVG");
+
+        // 5. Verify v1.7 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.7', "Version indicator updated to v1.7");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V1.7 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

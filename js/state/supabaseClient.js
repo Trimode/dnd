@@ -373,6 +373,56 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async fetchCampaignHandouts(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_handouts')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      content: r.content || '',
+      imageUrl: r.image_url || null,
+      targetCharId: r.target_char_id || 'ALL',
+      targetLabel: r.target_label || 'All Players',
+      senderName: r.sender_name || 'Dungeon Master',
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveCampaignHandout(campaignId, h) {
+    if (!this.isAvailable() || !h) return { success: false };
+    const { error } = await this.client.from('campaign_handouts').upsert({
+      id: h.id,
+      campaign_id: campaignId || 'demo',
+      title: h.title,
+      content: h.content || '',
+      image_url: h.imageUrl || null,
+      target_char_id: h.targetCharId || 'ALL',
+      target_label: h.targetLabel || 'All Players',
+      sender_name: h.senderName || 'Dungeon Master'
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async deleteCampaignHandout(handoutId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('campaign_handouts').delete().eq('id', handoutId);
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async savePartyLocation(campaignId, partyLocation) {
+    if (!this.isAvailable() || !partyLocation) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ party_location: partyLocation, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {

@@ -1,14 +1,18 @@
 /**
- * World State Management with LocalStorage Persistence
+ * World State Management with Supabase Cloud Persistence, Realtime Sync & Local Cache
  */
 import { INITIAL_WORLD_DATA } from '../data/worldData.js';
+import { supabaseDb } from './supabaseClient.js';
 
 const STORAGE_KEY = 'dnd_bleeding_realms_data_v1';
 const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '0.8';
+    this.version = '0.9';
+    this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
+    this.cloudListeners = [];
+    this.cloudReady = false;
     this.games = [
       {
         id: 'demo',
@@ -209,11 +213,17 @@ class WorldStateManager {
     };
   }
 
-  saveData() {
+  saveData(skipCloudSync = false) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+      const cacheKey = this.activeGameId && this.activeGameId !== 'demo'
+        ? `${STORAGE_KEY}_${this.activeGameId}`
+        : STORAGE_KEY;
+      localStorage.setItem(cacheKey, JSON.stringify(this.data));
     } catch (e) {
       console.error('Failed to save world data:', e);
+    }
+    if (!skipCloudSync && typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      supabaseDb.scheduleSync(this.activeGameId || 'demo', this.data, (st) => this.setCloudStatus(st));
     }
     this.notify();
   }
@@ -234,6 +244,69 @@ class WorldStateManager {
     };
   }
 
+  subscribeCloudStatus(listener) {
+    this.cloudListeners.push(listener);
+    listener(this.cloudStatus);
+    return () => {
+      this.cloudListeners = this.cloudListeners.filter(l => l !== listener);
+    };
+  }
+
+  setCloudStatus(status) {
+    this.cloudStatus = status;
+    this.cloudListeners.forEach(l => {
+      try { l(status); } catch (_) {}
+    });
+  }
+
+  async initCloud(campaignId = null) {
+    const targetId = campaignId || this.activeGameId || 'demo';
+    if (typeof supabaseDb === 'undefined' || !supabaseDb.isAvailable()) {
+      this.setCloudStatus('offline');
+      return false;
+    }
+
+    this.setCloudStatus('connecting');
+    try {
+      // 1. Fetch campaign list from Supabase
+      const remoteGames = await supabaseDb.fetchCampaigns();
+      if (remoteGames && remoteGames.length > 0) {
+        this.games = remoteGames;
+      }
+
+      // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
+      const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
+      const cloudData = await supabaseDb.loadCampaignData(targetId, seedData);
+      if (cloudData) {
+        this.data = cloudData;
+        this.ensureDefaults();
+        this.saveData(true); // Update local cache without re-triggering cloud write
+      }
+
+      // 3. Subscribe to Supabase Realtime for live multiplayer updates
+      supabaseDb.subscribeRealtime(
+        targetId,
+        async () => {
+          const fresh = await supabaseDb.loadCampaignData(targetId, null);
+          if (fresh) {
+            this.data = { ...this.data, ...fresh };
+            this.ensureDefaults();
+            this.saveData(true);
+          }
+        },
+        (status) => this.setCloudStatus(status)
+      );
+
+      this.cloudReady = true;
+      this.setCloudStatus('live');
+      return true;
+    } catch (err) {
+      console.warn('[WorldState] Cloud initialization failed, using local cache:', err);
+      this.setCloudStatus('offline');
+      return false;
+    }
+  }
+
   getActiveGame() {
     return this.games.find(g => g.id === this.activeGameId) || this.games[0];
   }
@@ -244,6 +317,7 @@ class WorldStateManager {
       this.activeGameId = gameId;
       this.prefs.activeGameId = gameId;
       this.savePrefs();
+      this.initCloud(gameId);
       this.notify();
     }
   }
@@ -254,6 +328,15 @@ class WorldStateManager {
     if (clean === 'bubbles') return true;
     const game = this.games.find(g => g.id === gameId);
     return game && game.password && game.password.toLowerCase() === clean;
+  }
+
+  async verifyGamePasswordAsync(gameId, password) {
+    if (!password) return false;
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      const remoteResult = await supabaseDb.verifyCampaignPassword(gameId, password);
+      if (remoteResult !== null) return remoteResult;
+    }
+    return this.verifyGamePassword(gameId, password);
   }
 
   notify() {

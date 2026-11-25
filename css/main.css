@@ -90,6 +90,41 @@
   box-shadow: 0 0 5px #38bdf8;
 }
 
+.cloud-sync-badge {
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.2;
+  vertical-align: middle;
+  transition: all 0.25s ease;
+}
+
+.cloud-sync-badge.live {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.18);
+}
+
+.cloud-sync-badge.syncing,
+.cloud-sync-badge.connecting {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+}
+
+.cloud-sync-badge.offline,
+.cloud-sync-badge.error {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
 .world-subtitle {
   font-family: var(--font-sans);
   font-size: 0.8rem;

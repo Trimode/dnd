@@ -30,6 +30,12 @@ $dataCode = $dataCode -replace 'const worldData =', 'const INITIAL_WORLD_DATA ='
 [void]$sb.AppendLine("  const worldData = INITIAL_WORLD_DATA;")
 [void]$sb.AppendLine("")
 
+# 1.5. Supabase Client
+[void]$sb.AppendLine("  // 1.5. SUPABASE CLIENT")
+$sbCode = Get-CleanModule "$root\state\supabaseClient.js"
+[void]$sb.AppendLine($sbCode)
+[void]$sb.AppendLine("")
+
 # 2. World State
 [void]$sb.AppendLine("  // 2. WORLD STATE")
 $stateCode = Get-CleanModule "$root\state\worldState.js"
@@ -80,6 +86,7 @@ $appVer = if ($vMatch.Success) { $vMatch.Groups[1].Value } else { "0.6" }
 [void]$sb.AppendLine("    window.renderMapView = renderMapView;")
 [void]$sb.AppendLine("    window.renderCombatView = renderCombatView;")
 [void]$sb.AppendLine("    window.renderCharacterCreateView = renderCharacterCreateView;")
+[void]$sb.AppendLine("    window.supabaseDb = supabaseDb;")
 [void]$sb.AppendLine("    window.worldState = worldState;")
 [void]$sb.AppendLine("  }")
 

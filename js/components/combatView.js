@@ -266,6 +266,36 @@ export function renderCombatView(container) {
               <span>Grid: <strong id="combat-grid-label">11x11</strong></span>
               <input type="range" id="combat-grid-slider" min="6" max="30" value="11" style="width: 120px; cursor: pointer;">
             </div>
+
+            <!-- DM Terrain, Fog of War & Custom Battlemap Upload -->
+            <div id="combat-dm-map-tools" style="margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.4rem;">
+              <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-gold); text-transform: uppercase;">
+                🗺️ Terrain, Fog of War &amp; Custom Map
+              </div>
+              <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+                <select id="combat-brush-select" class="theme-select" style="flex: 1; font-size: 0.72rem; padding: 2px 6px;">
+                  <option value="">Brush: OFF (Normal Click)</option>
+                  <option value="wall">🧱 Paint Wall / Obstacle</option>
+                  <option value="difficult">🌿 Paint Difficult Terrain</option>
+                  <option value="water">🌊 Paint Water</option>
+                  <option value="fire">🔥 Paint Hazard / Fire</option>
+                  <option value="erase_terrain">🧹 Erase Terrain</option>
+                  <option value="fog_hide">🌫️ Fog of War: Hide Tile</option>
+                  <option value="fog_reveal">☀️ Fog of War: Reveal Tile</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <button id="combat-fog-cover-all" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 2px 4px;">Cover All Fog</button>
+                <button id="combat-fog-reveal-all" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 2px 4px;">Reveal All Fog</button>
+              </div>
+              <div style="display: flex; gap: 0.3rem; align-items: center;">
+                <label for="combat-map-file-input" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 3px 6px; text-align: center; cursor: pointer; margin: 0;">
+                  📤 Upload Battlemap
+                </label>
+                <input type="file" id="combat-map-file-input" accept="image/*" style="display: none;">
+                <button id="combat-map-clear-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 3px 6px; color: #fca5a5;">Clear Map</button>
+              </div>
+            </div>
           </div>
 
           <!-- Combat & Real-time Dice Roll Log -->
@@ -309,6 +339,10 @@ function initCombatEngine(container) {
     advantageMode: 'NORMAL',
     selectedSpellId: null,
     isPaintActive: false,
+    activeBrush: '',
+    terrain: {},
+    fogOfWar: {},
+    mapImageUrl: null,
     hoveredTile: null,
     dmPingVis: 'ALL',
     dmPingRecipients: [],
@@ -681,6 +715,22 @@ function initCombatEngine(container) {
       return;
     }
 
+    // Terrain & Fog of War Brush Painting
+    if (cState.activeBrush) {
+      const key = `${gx},${gy}`;
+      if (cState.activeBrush === 'erase_terrain') {
+        delete cState.terrain[key];
+      } else if (cState.activeBrush === 'fog_hide') {
+        cState.fogOfWar[key] = true;
+      } else if (cState.activeBrush === 'fog_reveal') {
+        delete cState.fogOfWar[key];
+      } else {
+        cState.terrain[key] = cState.activeBrush;
+      }
+      persistCombatToCloud();
+      return;
+    }
+
     const clickedEntity = cState.entities.find(ent => ent.x === gx && ent.y === gy && ent.hp > 0);
 
     if (cState.selectedAction) {
@@ -913,6 +963,9 @@ function initCombatEngine(container) {
     const ab = ABILITIES[id];
     if (!ab) return false;
     const slotUsed = spendSlot(actor, ab.level);
+    if (actor.team === 'player' && ab.level > 0 && typeof worldState.spendSpellSlot === 'function') {
+      worldState.spendSpellSlot(actor.partyCharId || actor.id, ab.level);
+    }
     if (ab.uses) {
       actor.abilityUses = actor.abilityUses || {};
       actor.abilityUses[id] = (actor.abilityUses[id] || 0) + 1;
@@ -1551,6 +1604,7 @@ function initCombatEngine(container) {
     renderTurnUi();
     renderInitiativeList();
     updateActionUi();
+    persistCombatToCloud();
   }
 
   function checkCombatEnd() {
@@ -2089,8 +2143,152 @@ function initCombatEngine(container) {
   renderInitiativeList();
   updatePhaseHeader();
 
-  // Listen to worldState state changes for real-time rolls and requests
+  // ==========================================
+  // LIVE SUPABASE BATTLEMAT SYNC, TERRAIN, FOG & CUSTOM MAP
+  // ==========================================
+  let mapBgImg = null;
+  let loadedMapUrl = null;
+  let lastCloudCombatJson = '';
+
+  function setMapImageUrl(url) {
+    cState.mapImageUrl = url || null;
+    if (!url) {
+      mapBgImg = null;
+      loadedMapUrl = null;
+    } else if (url !== loadedMapUrl) {
+      loadedMapUrl = url;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { mapBgImg = img; };
+      img.src = url;
+    }
+  }
+
+  function setTerrainTile(gx, gy, type) {
+    const key = `${gx},${gy}`;
+    if (!type || type === 'erase') delete cState.terrain[key];
+    else cState.terrain[key] = type;
+    persistCombatToCloud();
+  }
+
+  function setFogTile(gx, gy, hidden) {
+    const key = `${gx},${gy}`;
+    if (hidden) cState.fogOfWar[key] = true;
+    else delete cState.fogOfWar[key];
+    persistCombatToCloud();
+  }
+
+  function persistCombatToCloud() {
+    const snapshot = {
+      gridSize: cState.gridSize,
+      entities: cState.entities.map(e => ({ ...e })),
+      combat: {
+        active: cState.combat.active,
+        round: cState.combat.round,
+        order: cState.combat.order,
+        turnIndex: cState.combat.turnIndex
+      },
+      terrain: { ...cState.terrain },
+      fogOfWar: { ...cState.fogOfWar },
+      mapImageUrl: cState.mapImageUrl || null,
+      updatedAt: Date.now()
+    };
+    lastCloudCombatJson = JSON.stringify({ ...snapshot, updatedAt: 0 });
+    if (typeof worldState.saveCombatState === 'function') {
+      worldState.saveCombatState(snapshot);
+    }
+  }
+
+  function hydrateCombatFromCloud() {
+    const remote = worldState.data && worldState.data.combatState;
+    if (!remote || typeof remote !== 'object') return;
+    const sig = JSON.stringify({ ...remote, updatedAt: 0 });
+    if (sig === lastCloudCombatJson) return;
+    lastCloudCombatJson = sig;
+
+    if (remote.gridSize) cState.gridSize = remote.gridSize;
+    if (Array.isArray(remote.entities) && remote.entities.length > 0) {
+      cState.entities = remote.entities.map(e => ({ ...e }));
+    }
+    if (remote.combat) {
+      cState.combat.active = !!remote.combat.active;
+      cState.combat.round = remote.combat.round || 0;
+      cState.combat.order = Array.isArray(remote.combat.order) ? remote.combat.order : [];
+      cState.combat.turnIndex = remote.combat.turnIndex || 0;
+    }
+    if (remote.terrain && typeof remote.terrain === 'object') {
+      cState.terrain = { ...remote.terrain };
+    }
+    if (remote.fogOfWar && typeof remote.fogOfWar === 'object') {
+      cState.fogOfWar = { ...remote.fogOfWar };
+    }
+    if (remote.mapImageUrl !== undefined) {
+      setMapImageUrl(remote.mapImageUrl);
+    }
+    renderTurnUi();
+    renderInitiativeList();
+    updatePhaseHeader();
+  }
+
+  // Bind DM Terrain, Fog & Battlemap Upload Controls
+  const brushSelect = container.querySelector('#combat-brush-select');
+  if (brushSelect) {
+    brushSelect.addEventListener('change', (e) => {
+      cState.activeBrush = e.target.value;
+      if (cState.activeBrush) {
+        cState.selectedAction = null;
+        updateActionUi();
+      }
+    });
+  }
+  container.querySelector('#combat-fog-cover-all')?.addEventListener('click', () => {
+    for (let x = 0; x < cState.gridSize; x++) {
+      for (let y = 0; y < cState.gridSize; y++) {
+        cState.fogOfWar[`${x},${y}`] = true;
+      }
+    }
+    persistCombatToCloud();
+    notifyToast('Fog of War covers the battlefield (DM sees through)');
+  });
+  container.querySelector('#combat-fog-reveal-all')?.addEventListener('click', () => {
+    cState.fogOfWar = {};
+    persistCombatToCloud();
+    notifyToast('Fog of War cleared');
+  });
+  container.querySelector('#combat-map-file-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    notifyToast('Uploading battlemap to Supabase Storage...');
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      const res = await supabaseDb.uploadBattlemapImage(worldState.activeGameId || 'demo', file);
+      if (res && res.success && res.url) {
+        setMapImageUrl(res.url);
+        persistCombatToCloud();
+        notifyToast('Battlemap uploaded & synced live to all players!');
+        return;
+      }
+    }
+    // Local FileReader fallback when offline
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMapImageUrl(reader.result);
+      persistCombatToCloud();
+      notifyToast('Battlemap loaded locally');
+    };
+    reader.readAsDataURL(file);
+  });
+  container.querySelector('#combat-map-clear-btn')?.addEventListener('click', () => {
+    setMapImageUrl(null);
+    persistCombatToCloud();
+    notifyToast('Battlemap background cleared');
+  });
+
+  // Hydrate initial combat session from Supabase if present
+  hydrateCombatFromCloud();
+
+  // Listen to worldState state changes for real-time rolls, requests & live battlemat sync
   worldState.subscribe(() => {
+    hydrateCombatFromCloud();
     renderCombatPendingBanner();
     updateActionUi();
     renderTurnUi();
@@ -2100,6 +2298,37 @@ function initCombatEngine(container) {
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const ts = cState.tileSize;
+
+    // Custom Uploaded Battlemap Background Image
+    if (mapBgImg && mapBgImg.complete) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(mapBgImg, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    // Painted Terrain Tiles (Wall, Difficult, Water, Fire)
+    const terrainColors = {
+      wall: 'rgba(51, 65, 85, 0.88)',
+      difficult: 'rgba(180, 83, 9, 0.35)',
+      water: 'rgba(14, 165, 233, 0.42)',
+      fire: 'rgba(239, 68, 68, 0.45)'
+    };
+    Object.keys(cState.terrain || {}).forEach(key => {
+      const tType = cState.terrain[key];
+      const parts = key.split(',');
+      const tx = parseInt(parts[0], 10);
+      const ty = parseInt(parts[1], 10);
+      if (!isNaN(tx) && !isNaN(ty) && terrainColors[tType]) {
+        ctx.fillStyle = terrainColors[tType];
+        ctx.fillRect(tx * ts, ty * ts, ts, ts);
+        if (tType === 'wall') {
+          ctx.strokeStyle = 'rgba(148, 163, 184, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(tx * ts + 2, ty * ts + 2, ts - 4, ts - 4);
+        }
+      }
+    });
 
     // Grid lines
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
@@ -2383,6 +2612,22 @@ function initCombatEngine(container) {
       if (eff.life <= 0) cState.effects.splice(i, 1);
     }
 
+    // Fog of War Overlay (opaque for players, translucent for DM)
+    const fogKeys = Object.keys(cState.fogOfWar || {});
+    if (fogKeys.length > 0) {
+      const isViewingAsDm = cState.currentPerspective === 'DM';
+      ctx.fillStyle = isViewingAsDm ? 'rgba(8, 10, 16, 0.42)' : 'rgba(8, 10, 16, 0.96)';
+      fogKeys.forEach(key => {
+        if (!cState.fogOfWar[key]) return;
+        const parts = key.split(',');
+        const fx = parseInt(parts[0], 10);
+        const fy = parseInt(parts[1], 10);
+        if (!isNaN(fx) && !isNaN(fy)) {
+          ctx.fillRect(fx * ts, fy * ts, ts, ts);
+        }
+      });
+    }
+
     animationFrameId = requestAnimationFrame(render);
   }
   animationFrameId = requestAnimationFrame(render);
@@ -2405,6 +2650,11 @@ function initCombatEngine(container) {
     updateActionUi,
     handleUnitClick,
     handleActionClick,
+    persistCombatToCloud,
+    hydrateCombatFromCloud,
+    setTerrainTile,
+    setFogTile,
+    setMapImageUrl,
     dist,
     logMsg
   };

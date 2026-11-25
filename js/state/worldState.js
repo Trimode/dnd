@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.3';
+    this.version = '1.4';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -336,6 +336,240 @@ class WorldStateManager {
       if (remoteResult !== null) return remoteResult;
     }
     return this.verifyGamePassword(gameId, password);
+  }
+
+  async createCampaign({ name, shortName, subtitle, description, password, system = 'D&D 5.5e' }) {
+    const cleanName = (name || '').trim();
+    const cleanPw = (password || '').trim();
+    if (!cleanName || cleanName.length < 2) return { success: false, error: 'Campaign name is required.' };
+    if (!cleanPw || cleanPw.length < 2) return { success: false, error: 'Password must be at least 2 characters.' };
+
+    const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('camp-' + Date.now());
+    const id = this.games.some(g => g.id === slug) ? `${slug}-${Date.now().toString().slice(-4)}` : slug;
+
+    let created = {
+      id,
+      name: cleanName,
+      shortName: (shortName || cleanName.split(' ')[0]).trim(),
+      subtitle: (subtitle || 'Custom D&D 5.5e Campaign').trim(),
+      description: (description || 'Custom campaign realm hosted in Supabase.').trim(),
+      status: 'active',
+      password: cleanPw,
+      system: system || 'D&D 5.5e',
+      regionsCount: 11,
+      partyCount: 0,
+      tag: 'Custom Campaign'
+    };
+
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      const remote = await supabaseDb.createCampaignWithPassword({
+        id,
+        name: created.name,
+        shortName: created.shortName,
+        subtitle: created.subtitle,
+        description: created.description,
+        password: cleanPw,
+        system: created.system
+      });
+      if (remote && remote.success && remote.campaign) {
+        created = { ...created, ...remote.campaign, password: cleanPw };
+      } else if (remote && remote.error) {
+        return { success: false, error: remote.error };
+      }
+    }
+
+    this.games.push(created);
+    this.notify();
+    return { success: true, campaign: created };
+  }
+
+  // ==========================================
+  // STRUCTURED INVENTORY, AUTO-AC & SPELL SLOTS
+  // ==========================================
+  recalculateCharacterAc(char) {
+    if (!char) return 10;
+    const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+    const dexMod = getMod(char.stats?.dex);
+    const conMod = getMod(char.stats?.con);
+    const wisMod = getMod(char.stats?.wis);
+    const items = Array.isArray(char.inventoryItems) ? char.inventoryItems : [];
+    const equipped = items.filter(i => i.equipped);
+    const armor = equipped.find(i => i.category === 'armor');
+    const shield = equipped.find(i => i.category === 'shield');
+    const magicBonus = equipped
+      .filter(i => i.category === 'magic' && Number(i.acBonus) > 0)
+      .reduce((sum, i) => sum + Number(i.acBonus), 0);
+
+    let baseAc = 10 + dexMod;
+    const clsLower = String(char.classRole || '').toLowerCase();
+    if (armor) {
+      const cap = armor.maxDex !== undefined ? Number(armor.maxDex) : 99;
+      baseAc = (Number(armor.baseAc) || 11) + Math.min(dexMod, cap);
+    } else if (clsLower.includes('barbarian')) {
+      baseAc = 10 + dexMod + conMod;
+    } else if (clsLower.includes('monk') && !shield) {
+      baseAc = 10 + dexMod + wisMod;
+    }
+    char.ac = baseAc + (shield ? (Number(shield.acBonus) || 2) : 0) + magicBonus;
+    return char.ac;
+  }
+
+  addInventoryItem(charId, itemData) {
+    if (!this.canControlCharacter(charId)) return null;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    if (!Array.isArray(char.inventoryItems)) char.inventoryItems = [];
+
+    // Stack identical potions
+    if (itemData.category === 'potion') {
+      const existing = char.inventoryItems.find(i => i.name === itemData.name);
+      if (existing) {
+        existing.quantity = (existing.quantity || 1) + (itemData.quantity || 1);
+        this.saveData();
+        return existing;
+      }
+    }
+
+    const newItem = {
+      ...itemData,
+      id: 'item_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      quantity: itemData.quantity || 1,
+      equipped: false
+    };
+    char.inventoryItems.push(newItem);
+    this.saveData();
+    return newItem;
+  }
+
+  toggleEquipItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return null;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return null;
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return null;
+
+    const nextEquipped = !item.equipped;
+    if (nextEquipped && item.requiresAttunement) {
+      const attunedCount = char.inventoryItems.filter(i => i.equipped && i.requiresAttunement).length;
+      if (attunedCount >= 3) {
+        return { success: false, error: 'Maximum of 3 attuned magic items reached.' };
+      }
+    }
+
+    // Unequip competing armor or shield slot automatically
+    if (nextEquipped && (item.category === 'armor' || item.category === 'shield')) {
+      char.inventoryItems.forEach(i => {
+        if (i.category === item.category && i.id !== item.id) i.equipped = false;
+      });
+    }
+
+    item.equipped = nextEquipped;
+    if (item.category === 'armor' || item.category === 'shield' || (item.category === 'magic' && Number(item.acBonus) > 0)) {
+      this.recalculateCharacterAc(char);
+    }
+    if (nextEquipped && item.category === 'weapon' && item.mastery) {
+      if (!Array.isArray(char.weaponMasteries)) char.weaponMasteries = [];
+      const tag = `${item.mastery} (${item.name})`;
+      if (!char.weaponMasteries.includes(tag)) char.weaponMasteries.push(tag);
+    }
+
+    this.saveData();
+    return { success: true, item, ac: char.ac };
+  }
+
+  consumeInventoryItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return { success: false };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return { success: false };
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return { success: false };
+
+    let healed = 0;
+    if (item.healDice) {
+      const m = String(item.healDice).match(/(\d+)d(\d+)(?:\+(\d+))?/i);
+      if (m) {
+        const count = parseInt(m[1], 10);
+        const sides = parseInt(m[2], 10);
+        const bonus = parseInt(m[3] || '0', 10);
+        let sum = bonus;
+        for (let i = 0; i < count; i++) sum += Math.floor(Math.random() * sides) + 1;
+        healed = sum;
+        char.hpCurrent = Math.min(char.hpMax || 10, (char.hpCurrent || 0) + healed);
+      }
+    }
+
+    item.quantity = (item.quantity || 1) - 1;
+    if (item.quantity <= 0) {
+      char.inventoryItems = char.inventoryItems.filter(i => i.id !== itemId);
+    }
+
+    if (healed > 0) {
+      this.logDiceRoll({
+        rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+        rollerAvatar: char.avatar || '🧪',
+        rollType: 'heal',
+        label: `Drank ${item.name}`,
+        formula: item.healDice,
+        total: healed,
+        note: `Restored +${healed} HP (now ${char.hpCurrent}/${char.hpMax})`
+      });
+    } else {
+      this.saveData();
+    }
+    return { success: true, healed, hpCurrent: char.hpCurrent };
+  }
+
+  removeInventoryItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return;
+    const wasAcItem = char.inventoryItems.some(i => i.id === itemId && i.equipped && (i.category === 'armor' || i.category === 'shield' || Number(i.acBonus) > 0));
+    char.inventoryItems = char.inventoryItems.filter(i => i.id !== itemId);
+    if (wasAcItem) this.recalculateCharacterAc(char);
+    this.saveData();
+  }
+
+  updateCharacterCurrency(charId, delta = {}) {
+    if (!this.canControlCharacter(charId)) return;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return;
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    ['gp', 'sp', 'cp'].forEach(k => {
+      if (delta[k]) char.currency[k] = Math.max(0, (char.currency[k] || 0) + Number(delta[k]));
+    });
+    this.saveData();
+  }
+
+  spendSpellSlot(charId, slotLevel) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !slotLevel || Number(slotLevel) <= 0) return { success: true, remaining: null };
+    if (!char.spellSlots || Object.keys(char.spellSlots).length === 0) return { success: true, remaining: null };
+    if (!char.spellSlotsRemaining) {
+      char.spellSlotsRemaining = { ...char.spellSlots };
+    }
+    const key = String(slotLevel);
+    const avail = Number(char.spellSlotsRemaining[key] ?? char.spellSlots[key] ?? 0);
+    if (avail <= 0) {
+      return { success: false, error: `No Level ${slotLevel} spell slots remaining! Take a Long Rest to recover.` };
+    }
+    char.spellSlotsRemaining[key] = avail - 1;
+    this.saveData();
+    return { success: true, remaining: char.spellSlotsRemaining[key] };
+  }
+
+  restoreSpellSlots(charId = null) {
+    const chars = charId
+      ? (this.data.partyCharacters || []).filter(c => c.id === charId)
+      : (this.data.partyCharacters || []);
+    chars.forEach(c => {
+      if (c.spellSlots) c.spellSlotsRemaining = { ...c.spellSlots };
+    });
+    this.saveData();
+  }
+
+  saveCombatState(combatSnapshot) {
+    this.data.combatState = combatSnapshot;
+    this.saveData();
   }
 
   notify() {

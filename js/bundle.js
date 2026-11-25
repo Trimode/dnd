@@ -1555,6 +1555,47 @@ class SupabaseCampaignService {
     }
   }
 
+  async createCampaignWithPassword({ id, name, shortName, subtitle, description, password, system = 'D&D 5.5e' }) {
+    if (!this.isAvailable()) return null;
+    try {
+      const { data, error } = await this.client.rpc('create_campaign_with_password', {
+        p_id: id,
+        p_name: name,
+        p_short_name: shortName || name,
+        p_subtitle: subtitle || '',
+        p_description: description || '',
+        p_password: password,
+        p_system: system
+      });
+      if (error) {
+        console.warn('[Supabase] create_campaign_with_password RPC error:', error.message);
+        return { success: false, error: error.message };
+      }
+      return data;
+    } catch (e) {
+      console.warn('[Supabase] createCampaignWithPassword failed:', e);
+      return { success: false, error: e.message };
+    }
+  }
+
+  async uploadBattlemapImage(campaignId, file) {
+    if (!this.isAvailable() || !file) return { success: false, error: 'Supabase Storage unavailable' };
+    try {
+      const ext = (file.name || 'map.png').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${campaignId || 'demo'}/battlemap_${Date.now()}.${ext}`;
+      const { error } = await this.client.storage
+        .from('battlemaps')
+        .upload(path, file, { upsert: true, contentType: file.type || 'image/png' });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      const { data: urlData } = this.client.storage.from('battlemaps').getPublicUrl(path);
+      return { success: true, url: urlData?.publicUrl || null, path };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   // Row mappers: DB <-> App WorldData format
   mapCharacterFromDb(row) {
     const details = row.details || {};
@@ -2148,7 +2189,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.3';
+    this.version = '1.4';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2475,6 +2516,240 @@ class WorldStateManager {
       if (remoteResult !== null) return remoteResult;
     }
     return this.verifyGamePassword(gameId, password);
+  }
+
+  async createCampaign({ name, shortName, subtitle, description, password, system = 'D&D 5.5e' }) {
+    const cleanName = (name || '').trim();
+    const cleanPw = (password || '').trim();
+    if (!cleanName || cleanName.length < 2) return { success: false, error: 'Campaign name is required.' };
+    if (!cleanPw || cleanPw.length < 2) return { success: false, error: 'Password must be at least 2 characters.' };
+
+    const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('camp-' + Date.now());
+    const id = this.games.some(g => g.id === slug) ? `${slug}-${Date.now().toString().slice(-4)}` : slug;
+
+    let created = {
+      id,
+      name: cleanName,
+      shortName: (shortName || cleanName.split(' ')[0]).trim(),
+      subtitle: (subtitle || 'Custom D&D 5.5e Campaign').trim(),
+      description: (description || 'Custom campaign realm hosted in Supabase.').trim(),
+      status: 'active',
+      password: cleanPw,
+      system: system || 'D&D 5.5e',
+      regionsCount: 11,
+      partyCount: 0,
+      tag: 'Custom Campaign'
+    };
+
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      const remote = await supabaseDb.createCampaignWithPassword({
+        id,
+        name: created.name,
+        shortName: created.shortName,
+        subtitle: created.subtitle,
+        description: created.description,
+        password: cleanPw,
+        system: created.system
+      });
+      if (remote && remote.success && remote.campaign) {
+        created = { ...created, ...remote.campaign, password: cleanPw };
+      } else if (remote && remote.error) {
+        return { success: false, error: remote.error };
+      }
+    }
+
+    this.games.push(created);
+    this.notify();
+    return { success: true, campaign: created };
+  }
+
+  // ==========================================
+  // STRUCTURED INVENTORY, AUTO-AC & SPELL SLOTS
+  // ==========================================
+  recalculateCharacterAc(char) {
+    if (!char) return 10;
+    const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+    const dexMod = getMod(char.stats?.dex);
+    const conMod = getMod(char.stats?.con);
+    const wisMod = getMod(char.stats?.wis);
+    const items = Array.isArray(char.inventoryItems) ? char.inventoryItems : [];
+    const equipped = items.filter(i => i.equipped);
+    const armor = equipped.find(i => i.category === 'armor');
+    const shield = equipped.find(i => i.category === 'shield');
+    const magicBonus = equipped
+      .filter(i => i.category === 'magic' && Number(i.acBonus) > 0)
+      .reduce((sum, i) => sum + Number(i.acBonus), 0);
+
+    let baseAc = 10 + dexMod;
+    const clsLower = String(char.classRole || '').toLowerCase();
+    if (armor) {
+      const cap = armor.maxDex !== undefined ? Number(armor.maxDex) : 99;
+      baseAc = (Number(armor.baseAc) || 11) + Math.min(dexMod, cap);
+    } else if (clsLower.includes('barbarian')) {
+      baseAc = 10 + dexMod + conMod;
+    } else if (clsLower.includes('monk') && !shield) {
+      baseAc = 10 + dexMod + wisMod;
+    }
+    char.ac = baseAc + (shield ? (Number(shield.acBonus) || 2) : 0) + magicBonus;
+    return char.ac;
+  }
+
+  addInventoryItem(charId, itemData) {
+    if (!this.canControlCharacter(charId)) return null;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return null;
+    if (!Array.isArray(char.inventoryItems)) char.inventoryItems = [];
+
+    // Stack identical potions
+    if (itemData.category === 'potion') {
+      const existing = char.inventoryItems.find(i => i.name === itemData.name);
+      if (existing) {
+        existing.quantity = (existing.quantity || 1) + (itemData.quantity || 1);
+        this.saveData();
+        return existing;
+      }
+    }
+
+    const newItem = {
+      ...itemData,
+      id: 'item_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      quantity: itemData.quantity || 1,
+      equipped: false
+    };
+    char.inventoryItems.push(newItem);
+    this.saveData();
+    return newItem;
+  }
+
+  toggleEquipItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return null;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return null;
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return null;
+
+    const nextEquipped = !item.equipped;
+    if (nextEquipped && item.requiresAttunement) {
+      const attunedCount = char.inventoryItems.filter(i => i.equipped && i.requiresAttunement).length;
+      if (attunedCount >= 3) {
+        return { success: false, error: 'Maximum of 3 attuned magic items reached.' };
+      }
+    }
+
+    // Unequip competing armor or shield slot automatically
+    if (nextEquipped && (item.category === 'armor' || item.category === 'shield')) {
+      char.inventoryItems.forEach(i => {
+        if (i.category === item.category && i.id !== item.id) i.equipped = false;
+      });
+    }
+
+    item.equipped = nextEquipped;
+    if (item.category === 'armor' || item.category === 'shield' || (item.category === 'magic' && Number(item.acBonus) > 0)) {
+      this.recalculateCharacterAc(char);
+    }
+    if (nextEquipped && item.category === 'weapon' && item.mastery) {
+      if (!Array.isArray(char.weaponMasteries)) char.weaponMasteries = [];
+      const tag = `${item.mastery} (${item.name})`;
+      if (!char.weaponMasteries.includes(tag)) char.weaponMasteries.push(tag);
+    }
+
+    this.saveData();
+    return { success: true, item, ac: char.ac };
+  }
+
+  consumeInventoryItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return { success: false };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return { success: false };
+    const item = char.inventoryItems.find(i => i.id === itemId);
+    if (!item) return { success: false };
+
+    let healed = 0;
+    if (item.healDice) {
+      const m = String(item.healDice).match(/(\d+)d(\d+)(?:\+(\d+))?/i);
+      if (m) {
+        const count = parseInt(m[1], 10);
+        const sides = parseInt(m[2], 10);
+        const bonus = parseInt(m[3] || '0', 10);
+        let sum = bonus;
+        for (let i = 0; i < count; i++) sum += Math.floor(Math.random() * sides) + 1;
+        healed = sum;
+        char.hpCurrent = Math.min(char.hpMax || 10, (char.hpCurrent || 0) + healed);
+      }
+    }
+
+    item.quantity = (item.quantity || 1) - 1;
+    if (item.quantity <= 0) {
+      char.inventoryItems = char.inventoryItems.filter(i => i.id !== itemId);
+    }
+
+    if (healed > 0) {
+      this.logDiceRoll({
+        rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+        rollerAvatar: char.avatar || '🧪',
+        rollType: 'heal',
+        label: `Drank ${item.name}`,
+        formula: item.healDice,
+        total: healed,
+        note: `Restored +${healed} HP (now ${char.hpCurrent}/${char.hpMax})`
+      });
+    } else {
+      this.saveData();
+    }
+    return { success: true, healed, hpCurrent: char.hpCurrent };
+  }
+
+  removeInventoryItem(charId, itemId) {
+    if (!this.canControlCharacter(charId)) return;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !Array.isArray(char.inventoryItems)) return;
+    const wasAcItem = char.inventoryItems.some(i => i.id === itemId && i.equipped && (i.category === 'armor' || i.category === 'shield' || Number(i.acBonus) > 0));
+    char.inventoryItems = char.inventoryItems.filter(i => i.id !== itemId);
+    if (wasAcItem) this.recalculateCharacterAc(char);
+    this.saveData();
+  }
+
+  updateCharacterCurrency(charId, delta = {}) {
+    if (!this.canControlCharacter(charId)) return;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return;
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    ['gp', 'sp', 'cp'].forEach(k => {
+      if (delta[k]) char.currency[k] = Math.max(0, (char.currency[k] || 0) + Number(delta[k]));
+    });
+    this.saveData();
+  }
+
+  spendSpellSlot(charId, slotLevel) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char || !slotLevel || Number(slotLevel) <= 0) return { success: true, remaining: null };
+    if (!char.spellSlots || Object.keys(char.spellSlots).length === 0) return { success: true, remaining: null };
+    if (!char.spellSlotsRemaining) {
+      char.spellSlotsRemaining = { ...char.spellSlots };
+    }
+    const key = String(slotLevel);
+    const avail = Number(char.spellSlotsRemaining[key] ?? char.spellSlots[key] ?? 0);
+    if (avail <= 0) {
+      return { success: false, error: `No Level ${slotLevel} spell slots remaining! Take a Long Rest to recover.` };
+    }
+    char.spellSlotsRemaining[key] = avail - 1;
+    this.saveData();
+    return { success: true, remaining: char.spellSlotsRemaining[key] };
+  }
+
+  restoreSpellSlots(charId = null) {
+    const chars = charId
+      ? (this.data.partyCharacters || []).filter(c => c.id === charId)
+      : (this.data.partyCharacters || []);
+    chars.forEach(c => {
+      if (c.spellSlots) c.spellSlotsRemaining = { ...c.spellSlots };
+    });
+    this.saveData();
+  }
+
+  saveCombatState(combatSnapshot) {
+    this.data.combatState = combatSnapshot;
+    this.saveData();
   }
 
   notify() {
@@ -6316,6 +6591,193 @@ function openLevelUpModal(charId, onComplete = null) {
   modal.classList.add('active');
 }
 
+  // COMPONENT: inventoryManager.js
+/**
+ * Structured Inventory, Equipment, Auto-AC & Consumable Potions Manager (D&D 5.5e)
+ * Persists directly to Supabase via worldState.data.partyCharacters[i].inventoryItems & currency.
+ */
+const INVENTORY_CATALOG = [
+  // Weapons
+  { name: 'Longsword', category: 'weapon', damage: '1d8', damageType: 'slashing', ability: 'str', mastery: 'Sap', weight: 3, notes: 'Versatile (1d10)' },
+  { name: 'Greataxe', category: 'weapon', damage: '1d12', damageType: 'slashing', ability: 'str', mastery: 'Cleave', weight: 7, notes: 'Heavy, Two-Handed' },
+  { name: 'Greatsword', category: 'weapon', damage: '2d6', damageType: 'slashing', ability: 'str', mastery: 'Graze', weight: 6, notes: 'Heavy, Two-Handed' },
+  { name: 'Warhammer', category: 'weapon', damage: '1d8', damageType: 'bludgeoning', ability: 'str', mastery: 'Push', weight: 2, notes: 'Versatile (1d10)' },
+  { name: 'Rapier', category: 'weapon', damage: '1d8', damageType: 'piercing', ability: 'dex', mastery: 'Vex', weight: 2, notes: 'Finesse' },
+  { name: 'Longbow', category: 'weapon', damage: '1d8', damageType: 'piercing', ability: 'dex', mastery: 'Slow', weight: 2, notes: 'Range 150/600, Heavy' },
+  { name: 'Dagger', category: 'weapon', damage: '1d4', damageType: 'piercing', ability: 'dex', mastery: 'Nick', weight: 1, notes: 'Finesse, Light, Thrown' },
+  { name: 'Quarterstaff', category: 'weapon', damage: '1d6', damageType: 'bludgeoning', ability: 'str', mastery: 'Topple', weight: 4, notes: 'Versatile (1d8)' },
+  // Armor
+  { name: 'Leather Armor', category: 'armor', armorType: 'light', baseAc: 11, maxDex: 99, weight: 10, notes: 'Light Armor (11 + DEX)' },
+  { name: 'Studded Leather', category: 'armor', armorType: 'light', baseAc: 12, maxDex: 99, weight: 13, notes: 'Light Armor (12 + DEX)' },
+  { name: 'Chain Shirt', category: 'armor', armorType: 'medium', baseAc: 13, maxDex: 2, weight: 20, notes: 'Medium Armor (13 + DEX max 2)' },
+  { name: 'Breastplate', category: 'armor', armorType: 'medium', baseAc: 14, maxDex: 2, weight: 20, notes: 'Medium Armor (14 + DEX max 2)' },
+  { name: 'Half Plate', category: 'armor', armorType: 'medium', baseAc: 15, maxDex: 2, weight: 40, notes: 'Medium Armor (15 + DEX max 2, Stealth Disadv)' },
+  { name: 'Chain Mail', category: 'armor', armorType: 'heavy', baseAc: 16, maxDex: 0, weight: 55, notes: 'Heavy Armor (AC 16, STR 13)' },
+  { name: 'Splint Armor', category: 'armor', armorType: 'heavy', baseAc: 17, maxDex: 0, weight: 60, notes: 'Heavy Armor (AC 17, STR 15)' },
+  { name: 'Plate Armor', category: 'armor', armorType: 'heavy', baseAc: 18, maxDex: 0, weight: 65, notes: 'Heavy Armor (AC 18, STR 15)' },
+  // Shields
+  { name: 'Shield', category: 'shield', acBonus: 2, weight: 6, notes: '+2 AC while equipped' },
+  { name: 'Shield +1', category: 'shield', acBonus: 3, weight: 6, notes: 'Uncommon Magic Shield (+3 AC)' },
+  // Magic Items / Wondrous
+  { name: 'Cloak of Protection', category: 'magic', acBonus: 1, requiresAttunement: true, weight: 1, notes: '+1 AC & +1 all Saving Throws (Attunement)' },
+  { name: 'Ring of Protection', category: 'magic', acBonus: 1, requiresAttunement: true, weight: 0, notes: '+1 AC & +1 all Saving Throws (Attunement)' },
+  { name: 'Bag of Holding', category: 'magic', acBonus: 0, requiresAttunement: false, weight: 15, notes: 'Holds up to 500 lbs in extradimensional space' },
+  // Potions & Consumables
+  { name: 'Potion of Healing', category: 'potion', healDice: '2d4+2', quantity: 2, weight: 0.5, notes: 'Bonus Action: Regain 2d4+2 HP' },
+  { name: 'Potion of Greater Healing', category: 'potion', healDice: '4d4+4', quantity: 1, weight: 0.5, notes: 'Bonus Action: Regain 4d4+4 HP' },
+  { name: 'Potion of Superior Healing', category: 'potion', healDice: '8d4+8', quantity: 1, weight: 0.5, notes: 'Bonus Action: Regain 8d4+8 HP' }
+];
+function calculateHeroAcFromEquipment(char) {
+  const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+  const dexMod = getMod(char.stats?.dex);
+  const conMod = getMod(char.stats?.con);
+  const wisMod = getMod(char.stats?.wis);
+  const items = Array.isArray(char.inventoryItems) ? char.inventoryItems : [];
+  const equipped = items.filter(i => i.equipped);
+
+  const armor = equipped.find(i => i.category === 'armor');
+  const shield = equipped.find(i => i.category === 'shield');
+  const magicBonus = equipped
+    .filter(i => i.category === 'magic' && Number(i.acBonus) > 0)
+    .reduce((sum, i) => sum + Number(i.acBonus), 0);
+
+  let baseAc = 10 + dexMod;
+  const clsLower = String(char.classRole || '').toLowerCase();
+
+  if (armor) {
+    const cap = armor.maxDex !== undefined ? Number(armor.maxDex) : 99;
+    baseAc = (Number(armor.baseAc) || 11) + Math.min(dexMod, cap);
+  } else if (clsLower.includes('barbarian')) {
+    baseAc = 10 + dexMod + conMod;
+  } else if (clsLower.includes('monk') && !shield) {
+    baseAc = 10 + dexMod + wisMod;
+  }
+
+  const shieldBonus = shield ? (Number(shield.acBonus) || 2) : 0;
+  return baseAc + shieldBonus + magicBonus;
+}
+function renderInventoryManager(container, hero, onUpdated) {
+  if (!container || !hero) return;
+  const items = Array.isArray(hero.inventoryItems) ? hero.inventoryItems : [];
+  const currency = hero.currency || { gp: 50, sp: 0, cp: 0 };
+  const attunedCount = items.filter(i => i.equipped && i.requiresAttunement).length;
+  const canEdit = worldState.canControlCharacter(hero.id);
+
+  container.innerHTML = `
+    <div style="margin-top: 1rem; background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.85rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem;">
+        <div>
+          <strong style="color: var(--text-gold); font-size: 0.9rem;">🎒 Equipment, Inventory &amp; Attunement</strong>
+          <span style="font-size: 0.72rem; color: var(--text-muted); margin-left: 0.5rem;">Attuned: <strong>${attunedCount}/3</strong></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.45rem; font-size: 0.78rem;">
+          <span style="background: rgba(212,175,55,0.16); color: var(--text-gold); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(212,175,55,0.35);">
+            <strong>${currency.gp || 0}</strong> GP
+          </span>
+          <span style="background: rgba(148,163,184,0.15); color: #cbd5e1; padding: 2px 6px; border-radius: 4px;">
+            <strong>${currency.sp || 0}</strong> SP
+          </span>
+          <span style="background: rgba(180,83,9,0.2); color: #fdba74; padding: 2px 6px; border-radius: 4px;">
+            <strong>${currency.cp || 0}</strong> CP
+          </span>
+          ${canEdit ? `
+            <button type="button" class="btn-tiny inv-gold-adj" data-delta="10" title="Add 10 GP">+10g</button>
+            <button type="button" class="btn-tiny inv-gold-adj" data-delta="-10" title="Spend 10 GP">-10g</button>
+          ` : ''}
+        </div>
+      </div>
+
+      ${items.length === 0 ? `
+        <div style="font-size: 0.8rem; color: var(--text-muted); font-style: italic; padding: 0.5rem 0;">
+          No structured gear yet. Add weapons, armor, shields, or potions from the 5.5e Armory below to auto-calculate AC and combat attacks.
+        </div>
+      ` : `
+        <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem;">
+          ${items.map(item => `
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; background: var(--bg-card); border: 1px solid ${item.equipped ? 'rgba(212,175,55,0.55)' : 'var(--border-subtle)'}; border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; font-size: 0.8rem;">
+              <div style="min-width: 0;">
+                <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+                  <strong style="color: ${item.equipped ? 'var(--text-gold)' : 'var(--text-primary)'};">${item.name}</strong>
+                  ${item.quantity && item.quantity > 1 ? `<span style="font-size:0.7rem; color:#94a3b8;">x${item.quantity}</span>` : ''}
+                  ${item.equipped ? `<span style="font-size:0.65rem; background:rgba(76,175,80,0.2); color:#81c784; padding:1px 5px; border-radius:3px;">Equipped</span>` : ''}
+                  ${item.damage ? `<span style="font-size:0.68rem; color:#fca5a5;">${item.damage} ${item.damageType || ''}</span>` : ''}
+                  ${item.mastery ? `<span style="font-size:0.65rem; color:#fcd34d;">[${item.mastery}]</span>` : ''}
+                  ${item.baseAc ? `<span style="font-size:0.68rem; color:#7dd3fc;">AC ${item.baseAc}${item.maxDex > 0 ? '+DEX' : ''}</span>` : ''}
+                  ${item.acBonus ? `<span style="font-size:0.68rem; color:#7dd3fc;">+${item.acBonus} AC</span>` : ''}
+                  ${item.healDice ? `<span style="font-size:0.68rem; color:#86efac;">Heals ${item.healDice}</span>` : ''}
+                </div>
+                ${item.notes ? `<div style="font-size: 0.7rem; color: var(--text-muted);">${item.notes}</div>` : ''}
+              </div>
+              ${canEdit ? `
+                <div style="display: flex; gap: 0.25rem; flex-shrink: 0;">
+                  ${item.category === 'potion' ? `
+                    <button type="button" class="btn-tiny inv-drink-btn" data-id="${item.id}" style="background: rgba(34,197,94,0.2); color: #86efac; border-color: rgba(34,197,94,0.4);">🧪 Drink</button>
+                  ` : `
+                    <button type="button" class="btn-tiny inv-equip-btn" data-id="${item.id}">${item.equipped ? 'Unequip' : 'Equip'}</button>
+                  `}
+                  <button type="button" class="btn-tiny inv-remove-btn" data-id="${item.id}" style="color: #fca5a5;" title="Remove item">&times;</button>
+                </div>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `}
+
+      ${canEdit ? `
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; border-top: 1px solid var(--border-subtle); padding-top: 0.6rem;">
+          <select id="inv-catalog-select" class="theme-select" style="flex: 1; min-width: 180px; font-size: 0.76rem; padding: 0.3rem 0.5rem;">
+            <option value="">-- Quick-Add from 5.5e Armory --</option>
+            ${INVENTORY_CATALOG.map((it, idx) => `<option value="${idx}">[${it.category.toUpperCase()}] ${it.name} — ${it.notes}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-sm btn-primary" id="inv-add-catalog-btn" style="font-size: 0.75rem;">+ Add Gear</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  if (!canEdit) return;
+
+  container.querySelectorAll('.inv-gold-adj').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const delta = parseInt(btn.getAttribute('data-delta'), 10) || 0;
+      worldState.updateCharacterCurrency(hero.id, { gp: delta });
+      if (onUpdated) onUpdated();
+    });
+  });
+
+  container.querySelector('#inv-add-catalog-btn')?.addEventListener('click', () => {
+    const sel = container.querySelector('#inv-catalog-select');
+    const idx = sel ? parseInt(sel.value, 10) : NaN;
+    if (isNaN(idx) || !INVENTORY_CATALOG[idx]) return;
+    worldState.addInventoryItem(hero.id, INVENTORY_CATALOG[idx]);
+    if (onUpdated) onUpdated();
+  });
+
+  container.querySelectorAll('.inv-equip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      worldState.toggleEquipItem(hero.id, btn.getAttribute('data-id'));
+      if (onUpdated) onUpdated();
+    });
+  });
+
+  container.querySelectorAll('.inv-drink-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const res = worldState.consumeInventoryItem(hero.id, btn.getAttribute('data-id'));
+      if (res && res.success) {
+        try { soundEngine.playDiceRoll(true); } catch (_) {}
+      }
+      if (onUpdated) onUpdated();
+    });
+  });
+
+  container.querySelectorAll('.inv-remove-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      worldState.removeInventoryItem(hero.id, btn.getAttribute('data-id'));
+      if (onUpdated) onUpdated();
+    });
+  });
+}
+
   // COMPONENT: partyView.js
 /**
  * Party Status Monitor & Player Character Creation / Upload System for D&D 5.5e
@@ -7652,13 +8114,16 @@ function renderHeroView(container) {
             <div style="margin-top: 0.85rem;">
               <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
                 <span>KNOWN SPELLS</span>
-                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${v}`).join(' • ')}</span>` : ''}
+                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${(activeHero.spellSlotsRemaining && activeHero.spellSlotsRemaining[k] !== undefined) ? activeHero.spellSlotsRemaining[k] : v}/${v}`).join(' • ')}</span>` : ''}
               </div>
               <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
                 ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
               </div>
             </div>
           ` : ''}
+
+          <!-- Structured Equipment, Auto-AC & Potions Container -->
+          <div id="hero-inventory-manager-mount"></div>
 
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
@@ -7831,6 +8296,12 @@ function renderHeroView(container) {
     });
   }
 
+  // Mount Structured Inventory Manager
+  const invMount = container.querySelector('#hero-inventory-manager-mount');
+  if (invMount && typeof renderInventoryManager === 'function') {
+    renderInventoryManager(invMount, activeHero, () => renderHeroView(container));
+  }
+
   // Level Up Wizard Trigger
   if (levelUpBtn) {
     levelUpBtn.addEventListener('click', () => {
@@ -7857,10 +8328,13 @@ function renderHeroView(container) {
       if (activeHero.classResources && activeHero.classResources.max) {
         activeHero.classResources.current = activeHero.classResources.max;
       }
+      if (activeHero.spellSlots) {
+        activeHero.spellSlotsRemaining = { ...activeHero.spellSlots };
+      }
       activeHero.conditions = [];
       worldState.saveData();
       soundEngine.playDiceRoll(true);
-      alert(`Long Rest completed! ${activeHero.name} fully restored HP, cleared conditions, and refilled class resources.`);
+      alert(`Long Rest completed! ${activeHero.name} fully restored HP, Spell Slots, cleared conditions, and refilled class resources.`);
       renderHeroView(container);
     });
   }
@@ -9073,6 +9547,36 @@ function renderCombatView(container) {
               <span>Grid: <strong id="combat-grid-label">11x11</strong></span>
               <input type="range" id="combat-grid-slider" min="6" max="30" value="11" style="width: 120px; cursor: pointer;">
             </div>
+
+            <!-- DM Terrain, Fog of War & Custom Battlemap Upload -->
+            <div id="combat-dm-map-tools" style="margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.4rem;">
+              <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-gold); text-transform: uppercase;">
+                🗺️ Terrain, Fog of War &amp; Custom Map
+              </div>
+              <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+                <select id="combat-brush-select" class="theme-select" style="flex: 1; font-size: 0.72rem; padding: 2px 6px;">
+                  <option value="">Brush: OFF (Normal Click)</option>
+                  <option value="wall">🧱 Paint Wall / Obstacle</option>
+                  <option value="difficult">🌿 Paint Difficult Terrain</option>
+                  <option value="water">🌊 Paint Water</option>
+                  <option value="fire">🔥 Paint Hazard / Fire</option>
+                  <option value="erase_terrain">🧹 Erase Terrain</option>
+                  <option value="fog_hide">🌫️ Fog of War: Hide Tile</option>
+                  <option value="fog_reveal">☀️ Fog of War: Reveal Tile</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <button id="combat-fog-cover-all" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 2px 4px;">Cover All Fog</button>
+                <button id="combat-fog-reveal-all" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 2px 4px;">Reveal All Fog</button>
+              </div>
+              <div style="display: flex; gap: 0.3rem; align-items: center;">
+                <label for="combat-map-file-input" class="btn btn-sm" style="flex: 1; font-size: 0.68rem; padding: 3px 6px; text-align: center; cursor: pointer; margin: 0;">
+                  📤 Upload Battlemap
+                </label>
+                <input type="file" id="combat-map-file-input" accept="image/*" style="display: none;">
+                <button id="combat-map-clear-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 3px 6px; color: #fca5a5;">Clear Map</button>
+              </div>
+            </div>
           </div>
 
           <!-- Combat & Real-time Dice Roll Log -->
@@ -9116,6 +9620,10 @@ function initCombatEngine(container) {
     advantageMode: 'NORMAL',
     selectedSpellId: null,
     isPaintActive: false,
+    activeBrush: '',
+    terrain: {},
+    fogOfWar: {},
+    mapImageUrl: null,
     hoveredTile: null,
     dmPingVis: 'ALL',
     dmPingRecipients: [],
@@ -9488,6 +9996,22 @@ function initCombatEngine(container) {
       return;
     }
 
+    // Terrain & Fog of War Brush Painting
+    if (cState.activeBrush) {
+      const key = `${gx},${gy}`;
+      if (cState.activeBrush === 'erase_terrain') {
+        delete cState.terrain[key];
+      } else if (cState.activeBrush === 'fog_hide') {
+        cState.fogOfWar[key] = true;
+      } else if (cState.activeBrush === 'fog_reveal') {
+        delete cState.fogOfWar[key];
+      } else {
+        cState.terrain[key] = cState.activeBrush;
+      }
+      persistCombatToCloud();
+      return;
+    }
+
     const clickedEntity = cState.entities.find(ent => ent.x === gx && ent.y === gy && ent.hp > 0);
 
     if (cState.selectedAction) {
@@ -9720,6 +10244,9 @@ function initCombatEngine(container) {
     const ab = ABILITIES[id];
     if (!ab) return false;
     const slotUsed = spendSlot(actor, ab.level);
+    if (actor.team === 'player' && ab.level > 0 && typeof worldState.spendSpellSlot === 'function') {
+      worldState.spendSpellSlot(actor.partyCharId || actor.id, ab.level);
+    }
     if (ab.uses) {
       actor.abilityUses = actor.abilityUses || {};
       actor.abilityUses[id] = (actor.abilityUses[id] || 0) + 1;
@@ -10358,6 +10885,7 @@ function initCombatEngine(container) {
     renderTurnUi();
     renderInitiativeList();
     updateActionUi();
+    persistCombatToCloud();
   }
 
   function checkCombatEnd() {
@@ -10896,8 +11424,152 @@ function initCombatEngine(container) {
   renderInitiativeList();
   updatePhaseHeader();
 
-  // Listen to worldState state changes for real-time rolls and requests
+  // ==========================================
+  // LIVE SUPABASE BATTLEMAT SYNC, TERRAIN, FOG & CUSTOM MAP
+  // ==========================================
+  let mapBgImg = null;
+  let loadedMapUrl = null;
+  let lastCloudCombatJson = '';
+
+  function setMapImageUrl(url) {
+    cState.mapImageUrl = url || null;
+    if (!url) {
+      mapBgImg = null;
+      loadedMapUrl = null;
+    } else if (url !== loadedMapUrl) {
+      loadedMapUrl = url;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { mapBgImg = img; };
+      img.src = url;
+    }
+  }
+
+  function setTerrainTile(gx, gy, type) {
+    const key = `${gx},${gy}`;
+    if (!type || type === 'erase') delete cState.terrain[key];
+    else cState.terrain[key] = type;
+    persistCombatToCloud();
+  }
+
+  function setFogTile(gx, gy, hidden) {
+    const key = `${gx},${gy}`;
+    if (hidden) cState.fogOfWar[key] = true;
+    else delete cState.fogOfWar[key];
+    persistCombatToCloud();
+  }
+
+  function persistCombatToCloud() {
+    const snapshot = {
+      gridSize: cState.gridSize,
+      entities: cState.entities.map(e => ({ ...e })),
+      combat: {
+        active: cState.combat.active,
+        round: cState.combat.round,
+        order: cState.combat.order,
+        turnIndex: cState.combat.turnIndex
+      },
+      terrain: { ...cState.terrain },
+      fogOfWar: { ...cState.fogOfWar },
+      mapImageUrl: cState.mapImageUrl || null,
+      updatedAt: Date.now()
+    };
+    lastCloudCombatJson = JSON.stringify({ ...snapshot, updatedAt: 0 });
+    if (typeof worldState.saveCombatState === 'function') {
+      worldState.saveCombatState(snapshot);
+    }
+  }
+
+  function hydrateCombatFromCloud() {
+    const remote = worldState.data && worldState.data.combatState;
+    if (!remote || typeof remote !== 'object') return;
+    const sig = JSON.stringify({ ...remote, updatedAt: 0 });
+    if (sig === lastCloudCombatJson) return;
+    lastCloudCombatJson = sig;
+
+    if (remote.gridSize) cState.gridSize = remote.gridSize;
+    if (Array.isArray(remote.entities) && remote.entities.length > 0) {
+      cState.entities = remote.entities.map(e => ({ ...e }));
+    }
+    if (remote.combat) {
+      cState.combat.active = !!remote.combat.active;
+      cState.combat.round = remote.combat.round || 0;
+      cState.combat.order = Array.isArray(remote.combat.order) ? remote.combat.order : [];
+      cState.combat.turnIndex = remote.combat.turnIndex || 0;
+    }
+    if (remote.terrain && typeof remote.terrain === 'object') {
+      cState.terrain = { ...remote.terrain };
+    }
+    if (remote.fogOfWar && typeof remote.fogOfWar === 'object') {
+      cState.fogOfWar = { ...remote.fogOfWar };
+    }
+    if (remote.mapImageUrl !== undefined) {
+      setMapImageUrl(remote.mapImageUrl);
+    }
+    renderTurnUi();
+    renderInitiativeList();
+    updatePhaseHeader();
+  }
+
+  // Bind DM Terrain, Fog & Battlemap Upload Controls
+  const brushSelect = container.querySelector('#combat-brush-select');
+  if (brushSelect) {
+    brushSelect.addEventListener('change', (e) => {
+      cState.activeBrush = e.target.value;
+      if (cState.activeBrush) {
+        cState.selectedAction = null;
+        updateActionUi();
+      }
+    });
+  }
+  container.querySelector('#combat-fog-cover-all')?.addEventListener('click', () => {
+    for (let x = 0; x < cState.gridSize; x++) {
+      for (let y = 0; y < cState.gridSize; y++) {
+        cState.fogOfWar[`${x},${y}`] = true;
+      }
+    }
+    persistCombatToCloud();
+    notifyToast('Fog of War covers the battlefield (DM sees through)');
+  });
+  container.querySelector('#combat-fog-reveal-all')?.addEventListener('click', () => {
+    cState.fogOfWar = {};
+    persistCombatToCloud();
+    notifyToast('Fog of War cleared');
+  });
+  container.querySelector('#combat-map-file-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    notifyToast('Uploading battlemap to Supabase Storage...');
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      const res = await supabaseDb.uploadBattlemapImage(worldState.activeGameId || 'demo', file);
+      if (res && res.success && res.url) {
+        setMapImageUrl(res.url);
+        persistCombatToCloud();
+        notifyToast('Battlemap uploaded & synced live to all players!');
+        return;
+      }
+    }
+    // Local FileReader fallback when offline
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMapImageUrl(reader.result);
+      persistCombatToCloud();
+      notifyToast('Battlemap loaded locally');
+    };
+    reader.readAsDataURL(file);
+  });
+  container.querySelector('#combat-map-clear-btn')?.addEventListener('click', () => {
+    setMapImageUrl(null);
+    persistCombatToCloud();
+    notifyToast('Battlemap background cleared');
+  });
+
+  // Hydrate initial combat session from Supabase if present
+  hydrateCombatFromCloud();
+
+  // Listen to worldState state changes for real-time rolls, requests & live battlemat sync
   worldState.subscribe(() => {
+    hydrateCombatFromCloud();
     renderCombatPendingBanner();
     updateActionUi();
     renderTurnUi();
@@ -10907,6 +11579,37 @@ function initCombatEngine(container) {
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const ts = cState.tileSize;
+
+    // Custom Uploaded Battlemap Background Image
+    if (mapBgImg && mapBgImg.complete) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(mapBgImg, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    // Painted Terrain Tiles (Wall, Difficult, Water, Fire)
+    const terrainColors = {
+      wall: 'rgba(51, 65, 85, 0.88)',
+      difficult: 'rgba(180, 83, 9, 0.35)',
+      water: 'rgba(14, 165, 233, 0.42)',
+      fire: 'rgba(239, 68, 68, 0.45)'
+    };
+    Object.keys(cState.terrain || {}).forEach(key => {
+      const tType = cState.terrain[key];
+      const parts = key.split(',');
+      const tx = parseInt(parts[0], 10);
+      const ty = parseInt(parts[1], 10);
+      if (!isNaN(tx) && !isNaN(ty) && terrainColors[tType]) {
+        ctx.fillStyle = terrainColors[tType];
+        ctx.fillRect(tx * ts, ty * ts, ts, ts);
+        if (tType === 'wall') {
+          ctx.strokeStyle = 'rgba(148, 163, 184, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(tx * ts + 2, ty * ts + 2, ts - 4, ts - 4);
+        }
+      }
+    });
 
     // Grid lines
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
@@ -11190,6 +11893,22 @@ function initCombatEngine(container) {
       if (eff.life <= 0) cState.effects.splice(i, 1);
     }
 
+    // Fog of War Overlay (opaque for players, translucent for DM)
+    const fogKeys = Object.keys(cState.fogOfWar || {});
+    if (fogKeys.length > 0) {
+      const isViewingAsDm = cState.currentPerspective === 'DM';
+      ctx.fillStyle = isViewingAsDm ? 'rgba(8, 10, 16, 0.42)' : 'rgba(8, 10, 16, 0.96)';
+      fogKeys.forEach(key => {
+        if (!cState.fogOfWar[key]) return;
+        const parts = key.split(',');
+        const fx = parseInt(parts[0], 10);
+        const fy = parseInt(parts[1], 10);
+        if (!isNaN(fx) && !isNaN(fy)) {
+          ctx.fillRect(fx * ts, fy * ts, ts, ts);
+        }
+      });
+    }
+
     animationFrameId = requestAnimationFrame(render);
   }
   animationFrameId = requestAnimationFrame(render);
@@ -11212,6 +11931,11 @@ function initCombatEngine(container) {
     updateActionUi,
     handleUnitClick,
     handleActionClick,
+    persistCombatToCloud,
+    hydrateCombatFromCloud,
+    setTerrainTile,
+    setFogTile,
+    setMapImageUrl,
     dist,
     logMsg
   };
@@ -12225,12 +12949,13 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.3';
+    window.APP_VERSION = '1.4';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;
     window.openLevelUpModal = openLevelUpModal;
     window.DND_LEVEL_UP_DATA = DND_LEVEL_UP_DATA;
+    window.INVENTORY_CATALOG = INVENTORY_CATALOG;
     window.supabaseDb = supabaseDb;
     window.worldState = worldState;
   }
@@ -12646,14 +13371,33 @@ const diceRoller = new DiceRollerModal();
             </button>
           </div>
         `;
-      }).join('');
+      }).join('') + `
+        <div class="game-tile-card create-campaign-tile" id="open-create-campaign-tile" style="border-style: dashed; border-color: rgba(212,175,55,0.55); justify-content: center; align-items: center; text-align: center; min-height: 190px;">
+          <div style="font-size: 2rem; color: var(--text-gold); margin-bottom: 0.4rem;">＋</div>
+          <h4 class="game-tile-title" style="color: var(--text-gold); margin-bottom: 0.35rem;">Create New Campaign</h4>
+          <p class="game-tile-desc" style="flex: 0; margin-bottom: 0.75rem;">Launch an isolated D&D 5.5e realm with its own custom password in Supabase.</p>
+          <span class="btn btn-sm" style="border-color: var(--accent-gold); color: var(--text-gold);">+ New Realm</span>
+        </div>
+      `;
 
-      gameTilesGrid.querySelectorAll('.game-tile-card').forEach(card => {
+      gameTilesGrid.querySelectorAll('.game-tile-card[data-game-id]').forEach(card => {
         card.addEventListener('click', () => {
           const gameId = card.getAttribute('data-game-id');
           openPasswordPrompt(gameId);
         });
       });
+
+      const createTile = gameTilesGrid.querySelector('#open-create-campaign-tile');
+      if (createTile) {
+        createTile.addEventListener('click', () => {
+          const createView = document.getElementById('game-create-view');
+          const createErr = document.getElementById('game-create-error');
+          if (createErr) createErr.style.display = 'none';
+          if (gameTilesView) gameTilesView.style.display = 'none';
+          if (gamePasswordView) gamePasswordView.style.display = 'none';
+          if (createView) createView.style.display = 'block';
+        });
+      }
     }
 
     function openPasswordPrompt(gameId) {
@@ -12673,9 +13417,44 @@ const diceRoller = new DiceRollerModal();
     }
 
     function showTilesView() {
+      const createView = document.getElementById('game-create-view');
+      if (createView) createView.style.display = 'none';
       if (gamePasswordView) gamePasswordView.style.display = 'none';
       if (gameTilesView) gameTilesView.style.display = 'block';
       renderGameTiles();
+    }
+
+    const gameCreateForm = document.getElementById('game-create-form');
+    const backFromCreateBtn = document.getElementById('back-from-create-btn');
+    const cancelCreateCampBtn = document.getElementById('cancel-create-camp-btn');
+    if (backFromCreateBtn) backFromCreateBtn.addEventListener('click', showTilesView);
+    if (cancelCreateCampBtn) cancelCreateCampBtn.addEventListener('click', showTilesView);
+    if (gameCreateForm) {
+      gameCreateForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errBox = document.getElementById('game-create-error');
+        const name = (document.getElementById('new-camp-name')?.value || '').trim();
+        const shortName = (document.getElementById('new-camp-short')?.value || '').trim();
+        const subtitle = (document.getElementById('new-camp-subtitle')?.value || '').trim();
+        const description = (document.getElementById('new-camp-desc')?.value || '').trim();
+        const password = (document.getElementById('new-camp-password')?.value || '').trim();
+        const res = await worldState.createCampaign({ name, shortName, subtitle, description, password });
+        if (!res.success) {
+          if (errBox) {
+            errBox.textContent = res.error || 'Could not create campaign.';
+            errBox.style.display = 'block';
+          }
+          return;
+        }
+        isGameUnlocked = true;
+        worldState.setActiveGame(res.campaign.id);
+        updateHeaderGameName();
+        gameCreateForm.reset();
+        if (gameSelectModal) {
+          gameSelectModal.classList.remove('active');
+          if (closeGameSelectBtn) closeGameSelectBtn.style.display = 'inline-block';
+        }
+      });
     }
 
     async function handleGamePasswordSubmit(e) {

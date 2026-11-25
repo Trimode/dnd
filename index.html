@@ -28,7 +28,7 @@
       <div class="header-left">
         <div class="world-crest">✦</div>
         <div class="world-branding">
-          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v1.3</span> <span class="cloud-sync-badge connecting" id="cloud-sync-indicator" title="Supabase Database & Realtime Sync Status">☁️ Connecting</span></h1>
+          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v1.4</span> <span class="cloud-sync-badge connecting" id="cloud-sync-indicator" title="Supabase Database & Realtime Sync Status">☁️ Connecting</span></h1>
           <div class="world-subtitle">Where Primal Elements Clash and Bleed into Diverse Lands & Peoples</div>
         </div>
       </div>
@@ -157,6 +157,44 @@
               <div class="portal-password-actions" style="display: flex; justify-content: flex-end; gap: 0.75rem;">
                 <button type="button" class="btn" id="cancel-password-btn">Cancel</button>
                 <button type="submit" class="btn btn-primary" id="submit-game-password-btn">Enter Campaign ✦</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Step 3: DM Create New Campaign View -->
+          <div id="game-create-view" class="game-password-view" style="display: none;">
+            <div class="password-card-header">
+              <button type="button" class="btn btn-sm btn-back" id="back-from-create-btn">&larr; Back to Campaigns</button>
+              <h3 style="margin-top: 0.75rem; color: var(--text-gold);">✦ Create New Campaign (Supabase Cloud)</h3>
+              <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">Creates a fresh isolated campaign with its own custom access password stored in Supabase.</p>
+            </div>
+            <div class="auth-alert-box error" id="game-create-error" style="display: none; margin-bottom: 1rem;"></div>
+            <form id="game-create-form" style="display: flex; flex-direction: column; gap: 0.85rem;">
+              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
+                <div class="form-group">
+                  <label for="new-camp-name">Campaign Name *</label>
+                  <input type="text" id="new-camp-name" class="form-control" placeholder="e.g. Curse of the Obsidian Spire" required>
+                </div>
+                <div class="form-group">
+                  <label for="new-camp-short">Short Label</label>
+                  <input type="text" id="new-camp-short" class="form-control" placeholder="e.g. Spire">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="new-camp-subtitle">Tagline / Subtitle</label>
+                <input type="text" id="new-camp-subtitle" class="form-control" placeholder="A dark fantasy 5.5e campaign...">
+              </div>
+              <div class="form-group">
+                <label for="new-camp-desc">Description</label>
+                <textarea id="new-camp-desc" class="form-control" rows="2" placeholder="Brief summary shown on the campaign tile..."></textarea>
+              </div>
+              <div class="form-group">
+                <label for="new-camp-password">Custom Campaign Password *</label>
+                <input type="password" id="new-camp-password" class="form-control" placeholder="Set custom access password for players..." required>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.25rem;">
+                <button type="button" class="btn" id="cancel-create-camp-btn">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="submit-create-camp-btn">Create &amp; Enter Campaign ✦</button>
               </div>
             </form>
           </div>
@@ -357,6 +395,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 
   <!-- Main Application Script -->
-  <script src="js/bundle.js?v=1.3"></script>
+  <script src="js/bundle.js?v=1.4"></script>
 </body>
 </html>

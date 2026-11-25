@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>VTT Suite Tests: Inventory, Campaign Creator, Spell Slots, Terrain & Fog</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+  <div id="combat-mount" style="display: none;"></div>
+  <div id="inv-mount" style="display: none;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.4"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Structured Inventory, Auto-AC & Potions
+        assert(Array.isArray(window.INVENTORY_CATALOG) && INVENTORY_CATALOG.length >= 20, "5.5e Armory catalog loaded (" + INVENTORY_CATALOG.length + " items)");
+        const hero = worldState.createPartyCharacter({
+          name: 'Ser Roland',
+          level: 4,
+          species: 'Human',
+          classRole: 'Fighter',
+          hitDie: 10,
+          hpMax: 36,
+          stats: { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 10 }
+        });
+        hero.hpCurrent = 20;
+
+        // Add & equip Plate Armor (AC 18) + Shield (+2 -> AC 20) + Cloak of Protection (+1 -> AC 21)
+        const plate = worldState.addInventoryItem(hero.id, INVENTORY_CATALOG.find(i => i.name === 'Plate Armor'));
+        const shield = worldState.addInventoryItem(hero.id, INVENTORY_CATALOG.find(i => i.name === 'Shield'));
+        const cloak = worldState.addInventoryItem(hero.id, INVENTORY_CATALOG.find(i => i.name === 'Cloak of Protection'));
+        worldState.toggleEquipItem(hero.id, plate.id);
+        assert(hero.ac === 18, "Equipping Plate Armor auto-calculates AC = 18 (got " + hero.ac + ")");
+        worldState.toggleEquipItem(hero.id, shield.id);
+        assert(hero.ac === 20, "Equipping Shield auto-calculates AC = 20 (got " + hero.ac + ")");
+        worldState.toggleEquipItem(hero.id, cloak.id);
+        assert(hero.ac === 21, "Equipping Cloak of Protection (Attuned) auto-calculates AC = 21 (got " + hero.ac + ")");
+
+        // Drink Potion of Healing
+        const pot = worldState.addInventoryItem(hero.id, INVENTORY_CATALOG.find(i => i.name === 'Potion of Healing'));
+        const drinkRes = worldState.consumeInventoryItem(hero.id, pot.id);
+        assert(drinkRes.success && drinkRes.healed >= 4 && hero.hpCurrent > 20, "Drinking Potion of Healing restored +" + drinkRes.healed + " HP (now " + hero.hpCurrent + ")");
+
+        // Currency adjuster
+        worldState.updateCharacterCurrency(hero.id, { gp: 25 });
+        assert(hero.currency && hero.currency.gp === 75, "Hero currency updated to 75 GP");
+
+        // 2. Spell Slot Spending & Long Rest Restoration
+        hero.spellSlots = { 1: 4, 2: 2 };
+        hero.spellSlotsRemaining = { 1: 4, 2: 2 };
+        const spend1 = worldState.spendSpellSlot(hero.id, 1);
+        assert(spend1.success && spend1.remaining === 3, "Spending a Level 1 spell slot decrements to 3/4");
+        worldState.restoreSpellSlots(hero.id);
+        assert(hero.spellSlotsRemaining[1] === 4, "restoreSpellSlots restores Level 1 slots back to 4/4");
+
+        // 3. DM Campaign Creator (Custom Password)
+        const campRes = await worldState.createCampaign({
+          name: 'Vault of the Frost King',
+          shortName: 'FrostKing',
+          subtitle: 'Subzero Dungeon Crawl',
+          description: 'Test campaign creation',
+          password: 'iceberg'
+        });
+        assert(campRes.success && campRes.campaign && campRes.campaign.shortName === 'FrostKing', "DM Campaign Creator created custom campaign: " + (campRes.campaign ? campRes.campaign.name : ''));
+        assert(worldState.verifyGamePassword(campRes.campaign.id, 'iceberg') === true, "New campaign accepts its custom password 'iceberg'");
+        assert(worldState.verifyGamePassword(campRes.campaign.id, 'wrong') === false, "New campaign rejects wrong password");
+
+        // 4. Battlemat Live Cloud State, Terrain Painting, Fog of War & Custom Map
+        const mount = document.getElementById('combat-mount');
+        renderCombatView(mount);
+        const ctrl = mount._combatController;
+        assert(typeof ctrl.persistCombatToCloud === 'function', "Combat controller exposes persistCombatToCloud");
+        assert(typeof ctrl.hydrateCombatFromCloud === 'function', "Combat controller exposes hydrateCombatFromCloud");
+
+        ctrl.setTerrainTile(3, 3, 'wall');
+        ctrl.setTerrainTile(4, 4, 'fire');
+        assert(ctrl.cState.terrain['3,3'] === 'wall' && ctrl.cState.terrain['4,4'] === 'fire', "Terrain tiles painted cleanly (wall & fire)");
+
+        ctrl.setFogTile(5, 5, true);
+        assert(ctrl.cState.fogOfWar['5,5'] === true, "Fog of War tile (5,5) hidden");
+        ctrl.setFogTile(5, 5, false);
+        assert(!ctrl.cState.fogOfWar['5,5'], "Fog of War tile (5,5) revealed");
+
+        ctrl.setMapImageUrl('https://example.com/custom-map.png');
+        ctrl.persistCombatToCloud();
+        assert(worldState.data.combatState && worldState.data.combatState.mapImageUrl === 'https://example.com/custom-map.png', "Custom battlemap URL & terrain persisted to worldState.data.combatState");
+        assert(worldState.data.combatState.terrain['3,3'] === 'wall', "Painted terrain persisted in combatState snapshot");
+
+        // 5. Verify Supabase client has createCampaignWithPassword & uploadBattlemapImage
+        assert(typeof supabaseDb.createCampaignWithPassword === 'function', "supabaseDb.createCampaignWithPassword RPC helper exists");
+        assert(typeof supabaseDb.uploadBattlemapImage === 'function', "supabaseDb.uploadBattlemapImage Storage helper exists");
+
+        // 6. Verify DOM controls in index.html & version v1.4
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        assert(doc.getElementById('game-create-form') !== null, "#game-create-form exists in Campaign Selection Portal");
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.4', "Version indicator updated to v1.4");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("VTT SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

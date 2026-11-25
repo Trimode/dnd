@@ -157,6 +157,47 @@ class SupabaseCampaignService {
     }
   }
 
+  async createCampaignWithPassword({ id, name, shortName, subtitle, description, password, system = 'D&D 5.5e' }) {
+    if (!this.isAvailable()) return null;
+    try {
+      const { data, error } = await this.client.rpc('create_campaign_with_password', {
+        p_id: id,
+        p_name: name,
+        p_short_name: shortName || name,
+        p_subtitle: subtitle || '',
+        p_description: description || '',
+        p_password: password,
+        p_system: system
+      });
+      if (error) {
+        console.warn('[Supabase] create_campaign_with_password RPC error:', error.message);
+        return { success: false, error: error.message };
+      }
+      return data;
+    } catch (e) {
+      console.warn('[Supabase] createCampaignWithPassword failed:', e);
+      return { success: false, error: e.message };
+    }
+  }
+
+  async uploadBattlemapImage(campaignId, file) {
+    if (!this.isAvailable() || !file) return { success: false, error: 'Supabase Storage unavailable' };
+    try {
+      const ext = (file.name || 'map.png').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${campaignId || 'demo'}/battlemap_${Date.now()}.${ext}`;
+      const { error } = await this.client.storage
+        .from('battlemaps')
+        .upload(path, file, { upsert: true, contentType: file.type || 'image/png' });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      const { data: urlData } = this.client.storage.from('battlemaps').getPublicUrl(path);
+      return { success: true, url: urlData?.publicUrl || null, path };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   // Row mappers: DB <-> App WorldData format
   mapCharacterFromDb(row) {
     const details = row.details || {};

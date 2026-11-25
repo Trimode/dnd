@@ -6,6 +6,7 @@
 import { worldState } from '../state/worldState.js';
 import { soundEngine } from '../utils/soundEngine.js';
 import { openLevelUpModal } from './levelUpModal.js';
+import { renderInventoryManager } from './inventoryManager.js';
 
 export function renderHeroView(container) {
   const { data, prefs } = worldState;
@@ -448,13 +449,16 @@ export function renderHeroView(container) {
             <div style="margin-top: 0.85rem;">
               <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
                 <span>KNOWN SPELLS</span>
-                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${v}`).join(' • ')}</span>` : ''}
+                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${(activeHero.spellSlotsRemaining && activeHero.spellSlotsRemaining[k] !== undefined) ? activeHero.spellSlotsRemaining[k] : v}/${v}`).join(' • ')}</span>` : ''}
               </div>
               <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
                 ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
               </div>
             </div>
           ` : ''}
+
+          <!-- Structured Equipment, Auto-AC & Potions Container -->
+          <div id="hero-inventory-manager-mount"></div>
 
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
@@ -627,6 +631,12 @@ export function renderHeroView(container) {
     });
   }
 
+  // Mount Structured Inventory Manager
+  const invMount = container.querySelector('#hero-inventory-manager-mount');
+  if (invMount && typeof renderInventoryManager === 'function') {
+    renderInventoryManager(invMount, activeHero, () => renderHeroView(container));
+  }
+
   // Level Up Wizard Trigger
   if (levelUpBtn) {
     levelUpBtn.addEventListener('click', () => {
@@ -653,10 +663,13 @@ export function renderHeroView(container) {
       if (activeHero.classResources && activeHero.classResources.max) {
         activeHero.classResources.current = activeHero.classResources.max;
       }
+      if (activeHero.spellSlots) {
+        activeHero.spellSlotsRemaining = { ...activeHero.spellSlots };
+      }
       activeHero.conditions = [];
       worldState.saveData();
       soundEngine.playDiceRoll(true);
-      alert(`Long Rest completed! ${activeHero.name} fully restored HP, cleared conditions, and refilled class resources.`);
+      alert(`Long Rest completed! ${activeHero.name} fully restored HP, Spell Slots, cleared conditions, and refilled class resources.`);
       renderHeroView(container);
     });
   }

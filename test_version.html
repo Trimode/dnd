@@ -10,7 +10,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=1.2"></script>
+  <script src="js/bundle.js?v=1.3"></script>
 
   <script>
     (async function() {
@@ -34,7 +34,7 @@
         // Check version indicator element
         const versionEl = doc.getElementById('app-version-indicator');
         assert(versionEl !== null, "#app-version-indicator element found in index.html");
-        assert(versionEl && versionEl.textContent.trim() === 'v1.2', "Indicator displays version 'v1.2' (found: '" + (versionEl ? versionEl.textContent.trim() : '') + "')");
+        assert(versionEl && versionEl.textContent.trim() === 'v1.3', "Indicator displays version 'v1.3' (found: '" + (versionEl ? versionEl.textContent.trim() : '') + "')");
         assert(versionEl && versionEl.classList.contains('app-version-badge'), "Indicator has .app-version-badge class");
 
         // Check location: must be in header-left / world-branding (top left of the screen)
@@ -46,11 +46,11 @@
         // Check bundle cache buster matches
         const scriptTag = doc.querySelector('script[src*="bundle.js"]');
         assert(scriptTag !== null, "bundle.js script tag found");
-        assert(scriptTag && scriptTag.getAttribute('src').includes('v=1.2'), "Script tag has matching cache-buster query 'bundle.js?v=1.2'");
+        assert(scriptTag && scriptTag.getAttribute('src').includes('v=1.3'), "Script tag has matching cache-buster query 'bundle.js?v=1.3'");
 
         // Check global and state version
-        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '1.2', "window.APP_VERSION is '1.2'");
-        assert(typeof worldState !== 'undefined' && worldState.version === '1.2', "worldState.version is '1.2'");
+        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '1.3', "window.APP_VERSION is '1.3'");
+        assert(typeof worldState !== 'undefined' && worldState.version === '1.3', "worldState.version is '1.3'");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

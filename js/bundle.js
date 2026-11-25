@@ -1877,6 +1877,58 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async saveAmbientAudio(campaignId, ambientAudio) {
+    if (!this.isAvailable() || !ambientAudio) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ ambient_audio: ambientAudio, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveFactionReputation(campaignId, reputation) {
+    if (!this.isAvailable() || !Array.isArray(reputation)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ faction_reputation: reputation, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchCampaignChat(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_chat')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      senderName: r.sender_name,
+      senderRole: r.sender_role || 'player',
+      recipientName: r.recipient_name || null,
+      message: r.message,
+      isWhisper: Boolean(r.is_whisper),
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async sendCampaignChatMessage(campaignId, msg) {
+    if (!this.isAvailable() || !msg) return { success: false };
+    const { error } = await this.client.from('campaign_chat').upsert({
+      id: msg.id,
+      campaign_id: campaignId || 'demo',
+      sender_name: msg.senderName || 'Adventurer',
+      sender_role: msg.senderRole || 'player',
+      recipient_name: msg.recipientName || null,
+      message: msg.message,
+      is_whisper: Boolean(msg.isWhisper)
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {
@@ -2501,7 +2553,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.8';
+    this.version = '1.9';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2768,14 +2820,15 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests, remoteChat] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
         supabaseDb.fetchSessionRecaps(targetId),
         supabaseDb.fetchCampaignHandouts(targetId),
-        supabaseDb.fetchCampaignQuests(targetId)
+        supabaseDb.fetchCampaignQuests(targetId),
+        supabaseDb.fetchCampaignChat(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -2785,6 +2838,7 @@ class WorldStateManager {
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
         if (Array.isArray(remoteQuests)) this.data.campaignQuests = remoteQuests;
+        if (Array.isArray(remoteChat)) this.data.campaignChat = remoteChat;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -3587,16 +3641,18 @@ class WorldStateManager {
     if (!char || !item) return { success: false, error: 'Item unavailable' };
     if ((item.stock || 0) <= 0) return { success: false, error: 'Out of stock' };
     if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
-    if ((char.currency.gp || 0) < item.priceGp) {
-      return { success: false, error: `Not enough GP (need ${item.priceGp} GP, have ${char.currency.gp || 0} GP).` };
+    const discountPct = this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0;
+    const effectivePrice = Math.max(1, Math.round(item.priceGp * (1 - discountPct / 100)));
+    if ((char.currency.gp || 0) < effectivePrice) {
+      return { success: false, error: `Not enough GP (need ${effectivePrice} GP, have ${char.currency.gp || 0} GP).` };
     }
-    char.currency.gp -= item.priceGp;
+    char.currency.gp -= effectivePrice;
     item.stock -= 1;
     this.addInventoryItem(char.id, { ...item, quantity: 1 });
     if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
       await supabaseDb.saveShopInventory(this.activeGameId || 'demo', shop);
     }
-    return { success: true, item: item.name, remainingGp: char.currency.gp };
+    return { success: true, item: item.name, paidGp: effectivePrice, discountPct, remainingGp: char.currency.gp };
   }
 
   sellInventoryItem(charId, itemId, baseValueGp = 20) {
@@ -3728,13 +3784,193 @@ class WorldStateManager {
     this.savePrefs();
   }
 
-  // Faction Standing updates
-  updatePartyStanding(factionId, delta) {
-    const faction = this.data.factions.find(f => f.id === factionId);
-    if (faction) {
-      faction.playerStanding = Math.max(-5, Math.min(5, (faction.playerStanding || 0) + delta));
-      this.saveData();
+  // Faction Standing updates (with Supabase Reputation Sync & Merchant Discounts)
+  getFactionStandingTier(standing = 0) {
+    if (standing >= 4) return 'Sworn';
+    if (standing >= 2) return 'Allied';
+    if (standing <= -3) return 'Hostile';
+    if (standing <= -1) return 'Wary';
+    return 'Neutral';
+  }
+
+  getMerchantDiscountPercent() {
+    const factions = this.data.factions || [];
+    const maxStanding = factions.reduce((mx, f) => Math.max(mx, f.playerStanding || 0), 0);
+    if (maxStanding >= 4) return 20;
+    if (maxStanding >= 2) return 10;
+    return 0;
+  }
+
+  async updatePartyStanding(factionId, delta) {
+    const faction = (this.data.factions || []).find(f => f.id === factionId);
+    if (!faction) return null;
+    faction.playerStanding = Math.max(-5, Math.min(5, (faction.playerStanding || 0) + delta));
+    const repSnapshot = (this.data.factions || []).map(f => ({
+      id: f.id,
+      name: f.name,
+      standing: f.playerStanding || 0,
+      tier: this.getFactionStandingTier(f.playerStanding || 0)
+    }));
+    this.data.factionReputation = repSnapshot;
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveFactionReputation(this.activeGameId || 'demo', repSnapshot);
     }
+    return { factionId, standing: faction.playerStanding, tier: this.getFactionStandingTier(faction.playerStanding) };
+  }
+
+  // ==========================================
+  // INTERACTIVE SPELL SLOT TRACKER & CASTING (v1.9)
+  // ==========================================
+  getSpellSlots(char) {
+    if (!char) return { max: {}, remaining: {}, pact: null };
+    if (!char.spellSlots || Object.keys(char.spellSlots).length === 0) {
+      const lvl = Math.max(1, parseInt(char.level, 10) || 1);
+      const role = (char.classRole || '').toLowerCase();
+      if (role.includes('warlock')) {
+        const pactCount = lvl >= 11 ? 3 : (lvl >= 2 ? 2 : 1);
+        const pactLevel = Math.min(5, Math.ceil(lvl / 2));
+        char.spellSlots = { [pactLevel]: pactCount };
+        char.pactSlots = { level: pactLevel, max: pactCount, remaining: pactCount };
+      } else {
+        const full = {
+          1: lvl >= 3 ? 4 : (lvl === 2 ? 3 : 2),
+          2: lvl >= 4 ? 3 : (lvl === 3 ? 2 : 0),
+          3: lvl >= 6 ? 3 : (lvl === 5 ? 2 : 0),
+          4: lvl >= 9 ? 3 : (lvl >= 7 ? lvl - 6 : 0),
+          5: lvl >= 10 ? 2 : (lvl === 9 ? 1 : 0)
+        };
+        const clean = {};
+        Object.entries(full).forEach(([k, v]) => { if (v > 0) clean[k] = v; });
+        char.spellSlots = clean;
+      }
+    }
+    if (!char.spellSlotsRemaining) {
+      char.spellSlotsRemaining = { ...char.spellSlots };
+    }
+    Object.keys(char.spellSlots).forEach(lvl => {
+      if (char.spellSlotsRemaining[lvl] === undefined) {
+        char.spellSlotsRemaining[lvl] = char.spellSlots[lvl];
+      }
+    });
+    return { max: char.spellSlots, remaining: char.spellSlotsRemaining, pact: char.pactSlots || null };
+  }
+
+  castSpell(charId, spellName, slotLevel = 1, isConcentration = false) {
+    if (!this.canControlCharacter(charId)) return { success: false, error: 'Permission denied' };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+    const slots = this.getSpellSlots(char);
+    const lvlKey = String(slotLevel);
+    if (slotLevel > 0) {
+      const rem = slots.remaining[lvlKey] ?? 0;
+      if (rem <= 0) {
+        return { success: false, error: `No Level ${slotLevel} spell slots remaining!` };
+      }
+      slots.remaining[lvlKey] = rem - 1;
+      if (char.pactSlots && String(char.pactSlots.level) === lvlKey) {
+        char.pactSlots.remaining = Math.max(0, (char.pactSlots.remaining || 0) - 1);
+      }
+    }
+    if (isConcentration) {
+      char.concentratingOn = spellName;
+    }
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '✨',
+      rollType: 'spell',
+      label: `Cast ${spellName}${slotLevel > 0 ? ` (Lvl ${slotLevel} Slot)` : ' (Cantrip)'}`,
+      formula: isConcentration ? 'Concentration Active' : 'Instantaneous',
+      total: slotLevel,
+      note: isConcentration ? `Concentrating on ${spellName}` : `Remaining L${slotLevel} slots: ${slotLevel > 0 ? slots.remaining[lvlKey] : '∞'}`
+    });
+    return { success: true, spell: spellName, slotLevel, remaining: slotLevel > 0 ? slots.remaining[lvlKey] : null, concentratingOn: char.concentratingOn || null };
+  }
+
+  restoreSpellSlots(charId, restType = 'long') {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    const slots = this.getSpellSlots(char);
+    if (restType === 'short') {
+      if (char.pactSlots) {
+        char.pactSlots.remaining = char.pactSlots.max;
+        slots.remaining[String(char.pactSlots.level)] = char.pactSlots.max;
+      }
+    } else {
+      Object.keys(slots.max).forEach(k => { slots.remaining[k] = slots.max[k]; });
+      if (char.pactSlots) char.pactSlots.remaining = char.pactSlots.max;
+      char.concentratingOn = null;
+    }
+    this.saveData();
+    return true;
+  }
+
+  // ==========================================
+  // TABLETOP SOUNDBOARD & AMBIENT AUDIO MIXER (SUPABASE)
+  // ==========================================
+  getAmbientAudio() {
+    if (!this.data.ambientAudio) {
+      this.data.ambientAudio = { track: 'none', volume: 0.5, sfx: null, updatedAt: 0 };
+    }
+    return this.data.ambientAudio;
+  }
+
+  async setAmbientAudio(patch = {}) {
+    const cur = this.getAmbientAudio();
+    this.data.ambientAudio = { ...cur, ...patch, updatedAt: Date.now() };
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveAmbientAudio(this.activeGameId || 'demo', this.data.ambientAudio);
+    }
+    return this.data.ambientAudio;
+  }
+
+  // ==========================================
+  // IN-CAMPAIGN PARTY CHAT & PRIVATE WHISPERS (SUPABASE REALTIME)
+  // ==========================================
+  getChatMessages(viewerName = null, isDm = null) {
+    if (!Array.isArray(this.data.campaignChat)) this.data.campaignChat = [];
+    const dm = isDm !== null ? Boolean(isDm) : Boolean(this.prefs?.dmMode);
+    if (dm || !viewerName) return this.data.campaignChat;
+    const vLower = String(viewerName).toLowerCase();
+    return this.data.campaignChat.filter(m => {
+      if (!m.isWhisper) return true;
+      return String(m.senderName || '').toLowerCase() === vLower ||
+             String(m.recipientName || '').toLowerCase() === vLower;
+    });
+  }
+
+  async sendChatMessage({ senderName = 'Adventurer', senderRole = 'player', recipientName = null, message = '' } = {}) {
+    let cleanMsg = String(message || '').trim();
+    if (!cleanMsg) return { success: false, error: 'Empty message' };
+    let target = recipientName ? String(recipientName).trim() : null;
+    let isWhisper = Boolean(target);
+
+    // Support /w @Target message syntax
+    const wMatch = cleanMsg.match(/^\/w\s+@?(\S+)\s+(.+)$/i);
+    if (wMatch) {
+      target = wMatch[1];
+      cleanMsg = wMatch[2].trim();
+      isWhisper = true;
+    }
+
+    const entry = {
+      id: 'chat-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      senderName,
+      senderRole: senderRole || (this.prefs?.dmMode ? 'dm' : 'player'),
+      recipientName: target,
+      message: cleanMsg,
+      isWhisper,
+      createdAt: Date.now()
+    };
+    if (!Array.isArray(this.data.campaignChat)) this.data.campaignChat = [];
+    this.data.campaignChat.push(entry);
+    if (this.data.campaignChat.length > 100) this.data.campaignChat.shift();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.sendCampaignChatMessage(this.activeGameId || 'demo', entry);
+    }
+    return { success: true, entry };
   }
 
   // 5.5e Bastion Turn Executor
@@ -4164,6 +4400,11 @@ class WorldStateManager {
       if (c.classResources && c.classResources.max) {
         c.classResources.current = c.classResources.max;
       }
+      if (c.spellSlots) {
+        c.spellSlotsRemaining = { ...c.spellSlots };
+      }
+      if (c.pactSlots) c.pactSlots.remaining = c.pactSlots.max;
+      c.concentratingOn = null;
       c.conditions = (c.conditions || []).filter(cond => cond !== 'Poisoned' && cond !== 'Exhaustion');
     });
     this.saveData();
@@ -4176,6 +4417,10 @@ class WorldStateManager {
       if (!isDm && !this.canControlCharacter(c.id, c)) return;
       const heal = Math.floor(c.hpMax * 0.4);
       c.hpCurrent = Math.min(c.hpMax, (c.hpCurrent || 0) + heal);
+      if (c.pactSlots) {
+        c.pactSlots.remaining = c.pactSlots.max;
+        if (c.spellSlotsRemaining) c.spellSlotsRemaining[String(c.pactSlots.level)] = c.pactSlots.max;
+      }
     });
     this.saveData();
   }
@@ -4639,8 +4884,74 @@ class ProceduralSoundEngine {
       case 'forest':
         this.createForestAmbience();
         break;
+      case 'tavern':
+        this.createFireAmbience();
+        break;
+      case 'rain':
+        this.createForestAmbience();
+        break;
+      case 'dungeon':
+        this.createEarthAmbience();
+        break;
+      case 'boss':
+        this.createFireAmbience();
+        this.createEarthAmbience();
+        break;
+      case 'none':
+        this.stopAmbience();
+        break;
       default:
         this.createFireAmbience();
+    }
+  }
+
+  setVolume(vol = 0.5) {
+    this.initContext();
+    const clamped = Math.max(0, Math.min(1, Number(vol) || 0));
+    if (this.gainNode && this.ctx && !this.isMuted) {
+      this.gainNode.gain.setTargetAtTime(clamped * 0.4, this.ctx.currentTime, 0.1);
+    }
+  }
+
+  playSfx(sfxId) {
+    this.initContext();
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    if (sfxId === 'sword') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(1200, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.18);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.24);
+    } else if (sfxId === 'thunder') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(95, now);
+      osc.frequency.exponentialRampToValueAtTime(32, now + 0.9);
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.95);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 1.0);
+    } else if (sfxId === 'spell') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.35);
+      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.48);
+    } else {
+      // Fanfare / Chime
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.setValueAtTime(880, now + 0.12);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.58);
     }
   }
 
@@ -5428,11 +5739,18 @@ function renderCharacterView(container) {
 function renderFactionView(container) {
   const { data } = worldState;
 
+  const discountPct = typeof worldState.getMerchantDiscountPercent === 'function' ? worldState.getMerchantDiscountPercent() : 0;
+
   container.innerHTML = `
     <div class="view-header">
       <div>
         <h2>Factions & Continental Influence Matrix</h2>
-        <div class="view-tagline">Political Power, Alliances, Party Reputation, and DM-Exclusive Standing Boons & Afflictions</div>
+        <div class="view-tagline">Political Power, Alliances, Party Reputation (Supabase Synced), and DM-Exclusive Standing Boons & Afflictions</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span class="meta-badge" id="faction-merchant-discount-badge" style="background: rgba(16,185,129,0.18); border-color: #10b981; color: #6ee7b7;">
+          🏪 Town Market Discount: ${discountPct}% ${discountPct >= 20 ? '(Sworn)' : discountPct >= 10 ? '(Allied)' : '(Standard)'}
+        </span>
       </div>
     </div>
     <div class="cards-grid" id="factions-grid-container"></div>
@@ -9431,18 +9749,30 @@ function renderHeroView(container) {
             </div>
           ` : ''}
 
-          <!-- Known Spells & Spell Slots -->
-          ${((activeHero.spells && activeHero.spells.length > 0) || (activeHero.spellSlots && Object.keys(activeHero.spellSlots).length > 0)) ? `
-            <div style="margin-top: 0.85rem;">
-              <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
-                <span>KNOWN SPELLS</span>
-                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${(activeHero.spellSlotsRemaining && activeHero.spellSlotsRemaining[k] !== undefined) ? activeHero.spellSlotsRemaining[k] : v}/${v}`).join(' • ')}</span>` : ''}
+          <!-- Interactive Spell Slot Tracker & One-Click Spellcasting (Supabase) -->
+          ${(() => {
+            const spInfo = typeof worldState.getSpellSlots === 'function' ? worldState.getSpellSlots(activeHero) : { max: {}, remaining: {} };
+            const slotLevels = Object.keys(spInfo.max || {});
+            return `
+              <div style="margin-top: 0.85rem; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(129, 140, 248, 0.35); border-radius: var(--radius-md); padding: 0.65rem 0.75rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.45rem;">
+                  <strong style="font-size: 0.78rem; color: #a5b4fc;">✨ SPELL SLOTS &amp; ONE-CLICK CASTING</strong>
+                  ${activeHero.concentratingOn ? `<span id="hero-conc-badge" style="font-size: 0.7rem; background: rgba(245, 158, 11, 0.2); border: 1px solid #f59e0b; color: #fde047; padding: 1px 6px; border-radius: 10px;">🔮 Concentrating: <strong>${activeHero.concentratingOn}</strong></span>` : ''}
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem;">
+                  ${slotLevels.map(lvl => {
+                    const max = spInfo.max[lvl] || 0;
+                    const rem = spInfo.remaining[lvl] ?? max;
+                    return `<button type="button" class="btn btn-sm hero-cast-slot-btn" data-lvl="${lvl}" title="Click to expend a Level ${lvl} slot" style="font-size: 0.7rem; padding: 2px 7px; border-color: #818cf8; color: ${rem > 0 ? '#c7d2fe' : '#64748b'};">L${lvl}: ${'●'.repeat(rem)}${'○'.repeat(Math.max(0, max - rem))} (${rem}/${max})</button>`;
+                  }).join('')}
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;">
+                  ${(activeHero.spells || []).map(sp => `<button type="button" class="hero-quick-spell-btn" data-spell="${sp}" title="Cast ${sp} (deducts lowest available slot & logs to Dice Log)" style="cursor:pointer; background: rgba(129, 140, 248, 0.18); border: 1px solid rgba(129, 140, 248, 0.4); color: #e0e7ff; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</button>`).join('')}
+                  <button type="button" class="btn btn-sm" id="hero-custom-cast-btn" style="font-size: 0.68rem; padding: 2px 7px; border-color: #6366f1; color: #a5b4fc;">+ Cast Spell</button>
+                </div>
               </div>
-              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
-                ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
-              </div>
-            </div>
-          ` : ''}
+            `;
+          })()}
 
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
@@ -9992,6 +10322,41 @@ function renderHeroView(container) {
   if (openJournalModalBtn) openJournalModalBtn.addEventListener('click', openJournalModal);
   if (closeJournalModalBtn) closeJournalModalBtn.addEventListener('click', closeJournalModal);
   if (cancelJournalModalBtn) cancelJournalModalBtn.addEventListener('click', closeJournalModal);
+
+  // Interactive Spell Slot & One-Click Spellcasting Handlers (v1.9)
+  container.querySelectorAll('.hero-cast-slot-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lvl = parseInt(btn.getAttribute('data-lvl'), 10) || 1;
+      const res = worldState.castSpell(activeHero.id, `Level ${lvl} Spell`, lvl, false);
+      if (!res.success && res.error) alert(res.error);
+      else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+      renderHeroView(container);
+    });
+  });
+
+  container.querySelectorAll('.hero-quick-spell-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const spName = btn.getAttribute('data-spell');
+      const spInfo = worldState.getSpellSlots(activeHero);
+      const availLvl = Object.keys(spInfo.remaining || {}).find(k => (spInfo.remaining[k] || 0) > 0);
+      const slotLvl = availLvl ? parseInt(availLvl, 10) : 0;
+      const res = worldState.castSpell(activeHero.id, spName, slotLvl, false);
+      if (!res.success && res.error) alert(res.error);
+      else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+      renderHeroView(container);
+    });
+  });
+
+  container.querySelector('#hero-custom-cast-btn')?.addEventListener('click', () => {
+    const spName = prompt('Spell Name to Cast:', 'Fireball');
+    if (!spName) return;
+    const slotLvl = parseInt(prompt('Spell Slot Level (0 for Cantrip):', '1') || '1', 10);
+    const isConc = confirm('Does this spell require Concentration?');
+    const res = worldState.castSpell(activeHero.id, spName.trim(), slotLvl, isConc);
+    if (!res.success && res.error) alert(res.error);
+    else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+    renderHeroView(container);
+  });
 
   if (newJournalForm) {
     newJournalForm.addEventListener('submit', (e) => {
@@ -13821,7 +14186,7 @@ function renderSocialView(container) {
         </div>
 
         <!-- Downtime Rest Controls -->
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <button class="btn btn-sm" id="social-short-rest-btn" title="Take a 1-hour Short Rest to spend hit dice and regain short-rest abilities">
             ☕ Short Rest
           </button>
@@ -13835,6 +14200,44 @@ function renderSocialView(container) {
           ` : ''}
         </div>
       </header>
+
+      <!-- Tabletop Soundboard & Ambient Audio Mixer + Private Whisper Bar (Supabase Synced) -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0.75rem; margin-bottom: 0.85rem;">
+        <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.65rem 0.85rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
+            <strong style="font-size: 0.82rem; color: #7dd3fc;">🎵 Tabletop Soundboard &amp; Audio Mixer (DM Synced)</strong>
+            <span id="soundboard-track-label" style="font-size: 0.72rem; color: var(--text-gold);">Track: ${(worldState.getAmbientAudio ? worldState.getAmbientAudio().track : 'none')}</span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;">
+            <select id="soundboard-track-select" class="editor-input" style="font-size: 0.74rem; padding: 2px 6px; width: auto;" ${!isDm ? 'disabled' : ''}>
+              ${['none', 'tavern', 'rain', 'dungeon', 'boss'].map(t => `<option value="${t}" ${(worldState.getAmbientAudio && worldState.getAmbientAudio().track === t) ? 'selected' : ''}>${t === 'none' ? 'Silence' : t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="sword" style="font-size: 0.7rem; padding: 2px 6px;">⚔️ Clash</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="thunder" style="font-size: 0.7rem; padding: 2px 6px;">⚡ Thunder</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="spell" style="font-size: 0.7rem; padding: 2px 6px;">✨ Spell</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="fanfare" style="font-size: 0.7rem; padding: 2px 6px;">🎺 Fanfare</button>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-card); border: 1px solid rgba(168,85,247,0.35); border-radius: var(--radius-md); padding: 0.65rem 0.85rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+            <strong style="font-size: 0.82rem; color: #d8b4fe;">💬 Party Chat &amp; Private Whispers (Supabase)</strong>
+            <span style="font-size: 0.68rem; color: var(--text-muted);">Tip: /w @DM secret message</span>
+          </div>
+          <div id="supabase-chat-feed" style="max-height: 90px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; margin-bottom: 0.45rem;">
+            ${(worldState.getChatMessages ? worldState.getChatMessages(activeHero?.name || 'Adventurer', isDm) : []).slice(-6).map(m => `
+              <div style="padding: 2px 6px; border-radius: 4px; background: ${m.isWhisper ? 'rgba(168,85,247,0.16)' : 'var(--bg-tertiary)'};">
+                <strong style="color: ${m.isWhisper ? '#e879f9' : 'var(--text-gold)'};">${m.senderName}${m.isWhisper ? ` → ${m.recipientName} (Whisper)` : ''}:</strong>
+                <span style="color: var(--text-secondary);"> ${m.message}</span>
+              </div>
+            `).join('') || `<div style="color: var(--text-muted); font-style: italic;">No whispers or party messages yet.</div>`}
+          </div>
+          <form id="supabase-whisper-form" style="display: flex; gap: 0.35rem;">
+            <input type="text" id="supabase-whisper-input" class="editor-input" placeholder="Say to party or /w @DM ..." style="flex: 1; font-size: 0.76rem; padding: 3px 7px;">
+            <button type="submit" class="btn btn-sm btn-primary" style="font-size: 0.72rem; padding: 3px 9px;">Send</button>
+          </form>
+        </div>
+      </div>
 
       <!-- Main Three-Column Social Layout -->
       <div class="social-layout">
@@ -14477,6 +14880,41 @@ function bindSocialEvents(container, party, activeHero) {
       alert(`⚡ Push request for ${ability} ${type === 'save' ? 'Saving Throw' : 'Check'} sent to ${targetPlayerName}!`);
     });
   }
+
+  // 11. Tabletop Soundboard & Ambient Audio Mixer (Supabase)
+  const trackSel = container.querySelector('#soundboard-track-select');
+  if (trackSel) {
+    trackSel.addEventListener('change', async () => {
+      await worldState.setAmbientAudio({ track: trackSel.value });
+      if (soundEngine.setMuted) soundEngine.setMuted(trackSel.value === 'none');
+      if (soundEngine.playAmbience) soundEngine.playAmbience(trackSel.value);
+      renderSocialView(container);
+    });
+  }
+  container.querySelectorAll('.soundboard-sfx-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sfx = btn.getAttribute('data-sfx');
+      await worldState.setAmbientAudio({ sfx });
+      if (soundEngine.setMuted) soundEngine.setMuted(false);
+      if (soundEngine.playSfx) soundEngine.playSfx(sfx);
+    });
+  });
+
+  // 12. Party Chat & Private Whispers Form (Supabase)
+  const whisperForm = container.querySelector('#supabase-whisper-form');
+  if (whisperForm) {
+    whisperForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const inp = container.querySelector('#supabase-whisper-input');
+      const text = inp?.value.trim();
+      if (!text) return;
+      const isDm = Boolean(worldState.prefs.dmMode);
+      const senderName = isDm ? 'DM' : (activeHero?.name || 'Adventurer');
+      await worldState.sendChatMessage({ senderName, senderRole: isDm ? 'dm' : 'player', message: text });
+      inp.value = '';
+      renderSocialView(container);
+    });
+  }
 }
 
 // Roll calculation & logging helper
@@ -14752,7 +15190,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.8';
+    window.APP_VERSION = '1.9';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

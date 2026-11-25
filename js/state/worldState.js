@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.8';
+    this.version = '1.9';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -276,14 +276,15 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps, remoteHandouts, remoteQuests, remoteChat] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
         supabaseDb.fetchEncounterPresets(targetId),
         supabaseDb.fetchCustomMonsters(targetId),
         supabaseDb.fetchLootChests(targetId),
         supabaseDb.fetchSessionRecaps(targetId),
         supabaseDb.fetchCampaignHandouts(targetId),
-        supabaseDb.fetchCampaignQuests(targetId)
+        supabaseDb.fetchCampaignQuests(targetId),
+        supabaseDb.fetchCampaignChat(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
@@ -293,6 +294,7 @@ class WorldStateManager {
         if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         if (Array.isArray(remoteHandouts)) this.data.campaignHandouts = remoteHandouts;
         if (Array.isArray(remoteQuests)) this.data.campaignQuests = remoteQuests;
+        if (Array.isArray(remoteChat)) this.data.campaignChat = remoteChat;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -1095,16 +1097,18 @@ class WorldStateManager {
     if (!char || !item) return { success: false, error: 'Item unavailable' };
     if ((item.stock || 0) <= 0) return { success: false, error: 'Out of stock' };
     if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
-    if ((char.currency.gp || 0) < item.priceGp) {
-      return { success: false, error: `Not enough GP (need ${item.priceGp} GP, have ${char.currency.gp || 0} GP).` };
+    const discountPct = this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0;
+    const effectivePrice = Math.max(1, Math.round(item.priceGp * (1 - discountPct / 100)));
+    if ((char.currency.gp || 0) < effectivePrice) {
+      return { success: false, error: `Not enough GP (need ${effectivePrice} GP, have ${char.currency.gp || 0} GP).` };
     }
-    char.currency.gp -= item.priceGp;
+    char.currency.gp -= effectivePrice;
     item.stock -= 1;
     this.addInventoryItem(char.id, { ...item, quantity: 1 });
     if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
       await supabaseDb.saveShopInventory(this.activeGameId || 'demo', shop);
     }
-    return { success: true, item: item.name, remainingGp: char.currency.gp };
+    return { success: true, item: item.name, paidGp: effectivePrice, discountPct, remainingGp: char.currency.gp };
   }
 
   sellInventoryItem(charId, itemId, baseValueGp = 20) {
@@ -1236,13 +1240,193 @@ class WorldStateManager {
     this.savePrefs();
   }
 
-  // Faction Standing updates
-  updatePartyStanding(factionId, delta) {
-    const faction = this.data.factions.find(f => f.id === factionId);
-    if (faction) {
-      faction.playerStanding = Math.max(-5, Math.min(5, (faction.playerStanding || 0) + delta));
-      this.saveData();
+  // Faction Standing updates (with Supabase Reputation Sync & Merchant Discounts)
+  getFactionStandingTier(standing = 0) {
+    if (standing >= 4) return 'Sworn';
+    if (standing >= 2) return 'Allied';
+    if (standing <= -3) return 'Hostile';
+    if (standing <= -1) return 'Wary';
+    return 'Neutral';
+  }
+
+  getMerchantDiscountPercent() {
+    const factions = this.data.factions || [];
+    const maxStanding = factions.reduce((mx, f) => Math.max(mx, f.playerStanding || 0), 0);
+    if (maxStanding >= 4) return 20;
+    if (maxStanding >= 2) return 10;
+    return 0;
+  }
+
+  async updatePartyStanding(factionId, delta) {
+    const faction = (this.data.factions || []).find(f => f.id === factionId);
+    if (!faction) return null;
+    faction.playerStanding = Math.max(-5, Math.min(5, (faction.playerStanding || 0) + delta));
+    const repSnapshot = (this.data.factions || []).map(f => ({
+      id: f.id,
+      name: f.name,
+      standing: f.playerStanding || 0,
+      tier: this.getFactionStandingTier(f.playerStanding || 0)
+    }));
+    this.data.factionReputation = repSnapshot;
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveFactionReputation(this.activeGameId || 'demo', repSnapshot);
     }
+    return { factionId, standing: faction.playerStanding, tier: this.getFactionStandingTier(faction.playerStanding) };
+  }
+
+  // ==========================================
+  // INTERACTIVE SPELL SLOT TRACKER & CASTING (v1.9)
+  // ==========================================
+  getSpellSlots(char) {
+    if (!char) return { max: {}, remaining: {}, pact: null };
+    if (!char.spellSlots || Object.keys(char.spellSlots).length === 0) {
+      const lvl = Math.max(1, parseInt(char.level, 10) || 1);
+      const role = (char.classRole || '').toLowerCase();
+      if (role.includes('warlock')) {
+        const pactCount = lvl >= 11 ? 3 : (lvl >= 2 ? 2 : 1);
+        const pactLevel = Math.min(5, Math.ceil(lvl / 2));
+        char.spellSlots = { [pactLevel]: pactCount };
+        char.pactSlots = { level: pactLevel, max: pactCount, remaining: pactCount };
+      } else {
+        const full = {
+          1: lvl >= 3 ? 4 : (lvl === 2 ? 3 : 2),
+          2: lvl >= 4 ? 3 : (lvl === 3 ? 2 : 0),
+          3: lvl >= 6 ? 3 : (lvl === 5 ? 2 : 0),
+          4: lvl >= 9 ? 3 : (lvl >= 7 ? lvl - 6 : 0),
+          5: lvl >= 10 ? 2 : (lvl === 9 ? 1 : 0)
+        };
+        const clean = {};
+        Object.entries(full).forEach(([k, v]) => { if (v > 0) clean[k] = v; });
+        char.spellSlots = clean;
+      }
+    }
+    if (!char.spellSlotsRemaining) {
+      char.spellSlotsRemaining = { ...char.spellSlots };
+    }
+    Object.keys(char.spellSlots).forEach(lvl => {
+      if (char.spellSlotsRemaining[lvl] === undefined) {
+        char.spellSlotsRemaining[lvl] = char.spellSlots[lvl];
+      }
+    });
+    return { max: char.spellSlots, remaining: char.spellSlotsRemaining, pact: char.pactSlots || null };
+  }
+
+  castSpell(charId, spellName, slotLevel = 1, isConcentration = false) {
+    if (!this.canControlCharacter(charId)) return { success: false, error: 'Permission denied' };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+    const slots = this.getSpellSlots(char);
+    const lvlKey = String(slotLevel);
+    if (slotLevel > 0) {
+      const rem = slots.remaining[lvlKey] ?? 0;
+      if (rem <= 0) {
+        return { success: false, error: `No Level ${slotLevel} spell slots remaining!` };
+      }
+      slots.remaining[lvlKey] = rem - 1;
+      if (char.pactSlots && String(char.pactSlots.level) === lvlKey) {
+        char.pactSlots.remaining = Math.max(0, (char.pactSlots.remaining || 0) - 1);
+      }
+    }
+    if (isConcentration) {
+      char.concentratingOn = spellName;
+    }
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: char.avatar || '✨',
+      rollType: 'spell',
+      label: `Cast ${spellName}${slotLevel > 0 ? ` (Lvl ${slotLevel} Slot)` : ' (Cantrip)'}`,
+      formula: isConcentration ? 'Concentration Active' : 'Instantaneous',
+      total: slotLevel,
+      note: isConcentration ? `Concentrating on ${spellName}` : `Remaining L${slotLevel} slots: ${slotLevel > 0 ? slots.remaining[lvlKey] : '∞'}`
+    });
+    return { success: true, spell: spellName, slotLevel, remaining: slotLevel > 0 ? slots.remaining[lvlKey] : null, concentratingOn: char.concentratingOn || null };
+  }
+
+  restoreSpellSlots(charId, restType = 'long') {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    const slots = this.getSpellSlots(char);
+    if (restType === 'short') {
+      if (char.pactSlots) {
+        char.pactSlots.remaining = char.pactSlots.max;
+        slots.remaining[String(char.pactSlots.level)] = char.pactSlots.max;
+      }
+    } else {
+      Object.keys(slots.max).forEach(k => { slots.remaining[k] = slots.max[k]; });
+      if (char.pactSlots) char.pactSlots.remaining = char.pactSlots.max;
+      char.concentratingOn = null;
+    }
+    this.saveData();
+    return true;
+  }
+
+  // ==========================================
+  // TABLETOP SOUNDBOARD & AMBIENT AUDIO MIXER (SUPABASE)
+  // ==========================================
+  getAmbientAudio() {
+    if (!this.data.ambientAudio) {
+      this.data.ambientAudio = { track: 'none', volume: 0.5, sfx: null, updatedAt: 0 };
+    }
+    return this.data.ambientAudio;
+  }
+
+  async setAmbientAudio(patch = {}) {
+    const cur = this.getAmbientAudio();
+    this.data.ambientAudio = { ...cur, ...patch, updatedAt: Date.now() };
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveAmbientAudio(this.activeGameId || 'demo', this.data.ambientAudio);
+    }
+    return this.data.ambientAudio;
+  }
+
+  // ==========================================
+  // IN-CAMPAIGN PARTY CHAT & PRIVATE WHISPERS (SUPABASE REALTIME)
+  // ==========================================
+  getChatMessages(viewerName = null, isDm = null) {
+    if (!Array.isArray(this.data.campaignChat)) this.data.campaignChat = [];
+    const dm = isDm !== null ? Boolean(isDm) : Boolean(this.prefs?.dmMode);
+    if (dm || !viewerName) return this.data.campaignChat;
+    const vLower = String(viewerName).toLowerCase();
+    return this.data.campaignChat.filter(m => {
+      if (!m.isWhisper) return true;
+      return String(m.senderName || '').toLowerCase() === vLower ||
+             String(m.recipientName || '').toLowerCase() === vLower;
+    });
+  }
+
+  async sendChatMessage({ senderName = 'Adventurer', senderRole = 'player', recipientName = null, message = '' } = {}) {
+    let cleanMsg = String(message || '').trim();
+    if (!cleanMsg) return { success: false, error: 'Empty message' };
+    let target = recipientName ? String(recipientName).trim() : null;
+    let isWhisper = Boolean(target);
+
+    // Support /w @Target message syntax
+    const wMatch = cleanMsg.match(/^\/w\s+@?(\S+)\s+(.+)$/i);
+    if (wMatch) {
+      target = wMatch[1];
+      cleanMsg = wMatch[2].trim();
+      isWhisper = true;
+    }
+
+    const entry = {
+      id: 'chat-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      senderName,
+      senderRole: senderRole || (this.prefs?.dmMode ? 'dm' : 'player'),
+      recipientName: target,
+      message: cleanMsg,
+      isWhisper,
+      createdAt: Date.now()
+    };
+    if (!Array.isArray(this.data.campaignChat)) this.data.campaignChat = [];
+    this.data.campaignChat.push(entry);
+    if (this.data.campaignChat.length > 100) this.data.campaignChat.shift();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.sendCampaignChatMessage(this.activeGameId || 'demo', entry);
+    }
+    return { success: true, entry };
   }
 
   // 5.5e Bastion Turn Executor
@@ -1672,6 +1856,11 @@ class WorldStateManager {
       if (c.classResources && c.classResources.max) {
         c.classResources.current = c.classResources.max;
       }
+      if (c.spellSlots) {
+        c.spellSlotsRemaining = { ...c.spellSlots };
+      }
+      if (c.pactSlots) c.pactSlots.remaining = c.pactSlots.max;
+      c.concentratingOn = null;
       c.conditions = (c.conditions || []).filter(cond => cond !== 'Poisoned' && cond !== 'Exhaustion');
     });
     this.saveData();
@@ -1684,6 +1873,10 @@ class WorldStateManager {
       if (!isDm && !this.canControlCharacter(c.id, c)) return;
       const heal = Math.floor(c.hpMax * 0.4);
       c.hpCurrent = Math.min(c.hpMax, (c.hpCurrent || 0) + heal);
+      if (c.pactSlots) {
+        c.pactSlots.remaining = c.pactSlots.max;
+        if (c.spellSlotsRemaining) c.spellSlotsRemaining[String(c.pactSlots.level)] = c.pactSlots.max;
+      }
     });
     this.saveData();
   }

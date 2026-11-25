@@ -479,6 +479,58 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async saveAmbientAudio(campaignId, ambientAudio) {
+    if (!this.isAvailable() || !ambientAudio) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ ambient_audio: ambientAudio, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveFactionReputation(campaignId, reputation) {
+    if (!this.isAvailable() || !Array.isArray(reputation)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ faction_reputation: reputation, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchCampaignChat(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('campaign_chat')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      senderName: r.sender_name,
+      senderRole: r.sender_role || 'player',
+      recipientName: r.recipient_name || null,
+      message: r.message,
+      isWhisper: Boolean(r.is_whisper),
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async sendCampaignChatMessage(campaignId, msg) {
+    if (!this.isAvailable() || !msg) return { success: false };
+    const { error } = await this.client.from('campaign_chat').upsert({
+      id: msg.id,
+      campaign_id: campaignId || 'demo',
+      sender_name: msg.senderName || 'Adventurer',
+      sender_role: msg.senderRole || 'player',
+      recipient_name: msg.recipientName || null,
+      message: msg.message,
+      is_whisper: Boolean(msg.isWhisper)
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {

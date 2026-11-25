@@ -474,18 +474,30 @@ export function renderHeroView(container) {
             </div>
           ` : ''}
 
-          <!-- Known Spells & Spell Slots -->
-          ${((activeHero.spells && activeHero.spells.length > 0) || (activeHero.spellSlots && Object.keys(activeHero.spellSlots).length > 0)) ? `
-            <div style="margin-top: 0.85rem;">
-              <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
-                <span>KNOWN SPELLS</span>
-                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${(activeHero.spellSlotsRemaining && activeHero.spellSlotsRemaining[k] !== undefined) ? activeHero.spellSlotsRemaining[k] : v}/${v}`).join(' • ')}</span>` : ''}
+          <!-- Interactive Spell Slot Tracker & One-Click Spellcasting (Supabase) -->
+          ${(() => {
+            const spInfo = typeof worldState.getSpellSlots === 'function' ? worldState.getSpellSlots(activeHero) : { max: {}, remaining: {} };
+            const slotLevels = Object.keys(spInfo.max || {});
+            return `
+              <div style="margin-top: 0.85rem; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(129, 140, 248, 0.35); border-radius: var(--radius-md); padding: 0.65rem 0.75rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.45rem;">
+                  <strong style="font-size: 0.78rem; color: #a5b4fc;">✨ SPELL SLOTS &amp; ONE-CLICK CASTING</strong>
+                  ${activeHero.concentratingOn ? `<span id="hero-conc-badge" style="font-size: 0.7rem; background: rgba(245, 158, 11, 0.2); border: 1px solid #f59e0b; color: #fde047; padding: 1px 6px; border-radius: 10px;">🔮 Concentrating: <strong>${activeHero.concentratingOn}</strong></span>` : ''}
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem;">
+                  ${slotLevels.map(lvl => {
+                    const max = spInfo.max[lvl] || 0;
+                    const rem = spInfo.remaining[lvl] ?? max;
+                    return `<button type="button" class="btn btn-sm hero-cast-slot-btn" data-lvl="${lvl}" title="Click to expend a Level ${lvl} slot" style="font-size: 0.7rem; padding: 2px 7px; border-color: #818cf8; color: ${rem > 0 ? '#c7d2fe' : '#64748b'};">L${lvl}: ${'●'.repeat(rem)}${'○'.repeat(Math.max(0, max - rem))} (${rem}/${max})</button>`;
+                  }).join('')}
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;">
+                  ${(activeHero.spells || []).map(sp => `<button type="button" class="hero-quick-spell-btn" data-spell="${sp}" title="Cast ${sp} (deducts lowest available slot & logs to Dice Log)" style="cursor:pointer; background: rgba(129, 140, 248, 0.18); border: 1px solid rgba(129, 140, 248, 0.4); color: #e0e7ff; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</button>`).join('')}
+                  <button type="button" class="btn btn-sm" id="hero-custom-cast-btn" style="font-size: 0.68rem; padding: 2px 7px; border-color: #6366f1; color: #a5b4fc;">+ Cast Spell</button>
+                </div>
               </div>
-              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
-                ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
-              </div>
-            </div>
-          ` : ''}
+            `;
+          })()}
 
           <!-- Structured Equipment, Auto-AC & Potions Container -->
           <div id="hero-inventory-manager-mount"></div>
@@ -1035,6 +1047,41 @@ export function renderHeroView(container) {
   if (openJournalModalBtn) openJournalModalBtn.addEventListener('click', openJournalModal);
   if (closeJournalModalBtn) closeJournalModalBtn.addEventListener('click', closeJournalModal);
   if (cancelJournalModalBtn) cancelJournalModalBtn.addEventListener('click', closeJournalModal);
+
+  // Interactive Spell Slot & One-Click Spellcasting Handlers (v1.9)
+  container.querySelectorAll('.hero-cast-slot-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lvl = parseInt(btn.getAttribute('data-lvl'), 10) || 1;
+      const res = worldState.castSpell(activeHero.id, `Level ${lvl} Spell`, lvl, false);
+      if (!res.success && res.error) alert(res.error);
+      else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+      renderHeroView(container);
+    });
+  });
+
+  container.querySelectorAll('.hero-quick-spell-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const spName = btn.getAttribute('data-spell');
+      const spInfo = worldState.getSpellSlots(activeHero);
+      const availLvl = Object.keys(spInfo.remaining || {}).find(k => (spInfo.remaining[k] || 0) > 0);
+      const slotLvl = availLvl ? parseInt(availLvl, 10) : 0;
+      const res = worldState.castSpell(activeHero.id, spName, slotLvl, false);
+      if (!res.success && res.error) alert(res.error);
+      else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+      renderHeroView(container);
+    });
+  });
+
+  container.querySelector('#hero-custom-cast-btn')?.addEventListener('click', () => {
+    const spName = prompt('Spell Name to Cast:', 'Fireball');
+    if (!spName) return;
+    const slotLvl = parseInt(prompt('Spell Slot Level (0 for Cantrip):', '1') || '1', 10);
+    const isConc = confirm('Does this spell require Concentration?');
+    const res = worldState.castSpell(activeHero.id, spName.trim(), slotLvl, isConc);
+    if (!res.success && res.error) alert(res.error);
+    else if (soundEngine.playSfx) soundEngine.playSfx('spell');
+    renderHeroView(container);
+  });
 
   if (newJournalForm) {
     newJournalForm.addEventListener('submit', (e) => {

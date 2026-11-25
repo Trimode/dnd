@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v1.9 Tests: Spell Slots, Tabletop Soundboard, Faction Reputation Discounts & Private Whispers</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.9"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Interactive Spell Slot Tracker & One-Click Spellcasting
+        const mage = worldState.createPartyCharacter({
+          name: 'Lyra Starweaver',
+          level: 5,
+          species: 'High Elf',
+          classRole: 'Wizard (Evoker)',
+          hitDie: 6,
+          hpMax: 32,
+          stats: { str: 8, dex: 14, con: 14, int: 18, wis: 12, cha: 10 }
+        });
+        const slots = worldState.getSpellSlots(mage);
+        assert(slots.max['1'] === 4 && slots.max['3'] === 2, "Level 5 Wizard auto-initialized with 4 L1 slots and 2 L3 slots");
+
+        const castRes = worldState.castSpell(mage.id, 'Fireball', 3, false);
+        assert(castRes.success && castRes.remaining === 1, "Casting Fireball (L3) deducts slot from 2 -> 1");
+
+        const concRes = worldState.castSpell(mage.id, 'Haste', 3, true);
+        assert(concRes.success && concRes.remaining === 0 && mage.concentratingOn === 'Haste', "Casting Haste flags Concentration and drops L3 slots to 0");
+
+        const emptyRes = worldState.castSpell(mage.id, 'Counterspell', 3, false);
+        assert(!emptyRes.success, "Casting L3 spell with 0 remaining slots is properly blocked");
+
+        worldState.restoreSpellSlots(mage.id, 'long');
+        assert(mage.spellSlotsRemaining['3'] === 2 && !mage.concentratingOn, "Long Rest restores all spell slots and clears Concentration");
+
+        // 2. Warlock Pact Slots Short Rest Recovery
+        const lock = worldState.createPartyCharacter({
+          name: 'Malakor Hex',
+          level: 5,
+          species: 'Tiefling',
+          classRole: 'Warlock (Fiend)',
+          hitDie: 8,
+          hpMax: 38
+        });
+        const pSlots = worldState.getSpellSlots(lock);
+        assert(pSlots.pact && pSlots.pact.level === 3 && pSlots.pact.max === 2, "Level 5 Warlock initialized with 2x Level 3 Pact Slots");
+        worldState.castSpell(lock.id, 'Hex', 3, true);
+        assert(lock.pactSlots.remaining === 1, "Warlock Pact Slot decrements to 1 on cast");
+        worldState.restoreSpellSlots(lock.id, 'short');
+        assert(lock.pactSlots.remaining === 2, "Short Rest recovers Warlock Pact Slots back to 2");
+
+        // 3. Tabletop Soundboard & Ambient Audio Mixer
+        const aud = await worldState.setAmbientAudio({ track: 'tavern', volume: 0.7, sfx: 'thunder' });
+        assert(aud.track === 'tavern' && aud.volume === 0.7 && aud.sfx === 'thunder', "Ambient Audio Mixer persisted Tavern track, volume 0.7 & Thunder SFX");
+
+        // 4. Faction Reputation Tiers & Automatic Merchant Discounts
+        const firstFaction = worldState.data.factions[0];
+        firstFaction.playerStanding = 0;
+        assert(worldState.getFactionStandingTier(0) === 'Neutral', "Standing 0 maps to Neutral tier");
+        await worldState.updatePartyStanding(firstFaction.id, 4); // +4 -> Sworn (20% discount)
+        assert(worldState.getFactionStandingTier(firstFaction.playerStanding) === 'Sworn', "Standing +4 maps to Sworn tier");
+        assert(worldState.getMerchantDiscountPercent() === 20, "Sworn standing unlocks 20% Town Market discount");
+
+        mage.currency = { gp: 100, sp: 0, cp: 0 };
+        const buyDiscountRes = await worldState.buyShopItem(mage.id, 0); // 50 GP -> 40 GP (20% off)
+        assert(buyDiscountRes.success && buyDiscountRes.paidGp === 40 && mage.currency.gp === 60, "Buying 50 GP Potion with Sworn 20% discount charges 40 GP");
+
+        // 5. In-Campaign Party Chat & Private Whispers (/w syntax & privacy filter)
+        const pubRes = await worldState.sendChatMessage({ senderName: 'Lyra', message: 'Torch is lit, moving down the stairs.' });
+        assert(pubRes.success && !pubRes.entry.isWhisper, "Public party chat message sent");
+
+        const whispRes = await worldState.sendChatMessage({ senderName: 'Lyra', message: '/w @DM I pocket the ruby silently.' });
+        assert(whispRes.success && whispRes.entry.isWhisper && whispRes.entry.recipientName === 'DM', "Slash command /w @DM creates private whisper to DM");
+
+        const otherPlayerFeed = worldState.getChatMessages('Malakor', false);
+        const dmFeed = worldState.getChatMessages('DM', true);
+        assert(!otherPlayerFeed.some(m => m.id === whispRes.entry.id), "Private whisper is hidden from other players");
+        assert(dmFeed.some(m => m.id === whispRes.entry.id), "Private whisper is visible to the DM");
+
+        // 6. Verify v1.9 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.9', "Version indicator updated to v1.9");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V1.9 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

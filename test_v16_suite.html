@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>v1.8 Tests: Death Saves, Loot Chests, Custom Monsters & Session Recaps</title>
+  <title>v1.9 Tests: Death Saves, Loot Chests, Custom Monsters & Session Recaps</title>
   <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -10,7 +10,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=1.8"></script>
+  <script src="js/bundle.js?v=1.9"></script>
 
   <script>
     (async function() {
@@ -91,17 +91,17 @@
         assert((worldState.data.timeline || []).some(t => t.title === 'The Siege of Crucible Gate'), "Session Recap appended automatically to Campaign Timeline");
         assert(typeof supabaseDb.saveSessionRecap === 'function', "supabaseDb.saveSessionRecap persists to public.session_recaps");
 
-        // 5. Verify v1.8 version badge
+        // 5. Verify v1.9 version badge
         const res = await fetch('index.html');
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v1.8', "Version indicator updated to v1.8");
+        assert(verEl && verEl.textContent.trim() === 'v1.9', "Version indicator updated to v1.9");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;
         results.push("\n==========================================");
-        results.push("v1.8 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("v1.9 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
         results.push("==========================================");
 
         document.getElementById('test-results').innerText = results.join('\n');

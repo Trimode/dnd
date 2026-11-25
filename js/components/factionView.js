@@ -7,11 +7,18 @@ import { worldState } from '../state/worldState.js';
 export function renderFactionView(container) {
   const { data } = worldState;
 
+  const discountPct = typeof worldState.getMerchantDiscountPercent === 'function' ? worldState.getMerchantDiscountPercent() : 0;
+
   container.innerHTML = `
     <div class="view-header">
       <div>
         <h2>Factions & Continental Influence Matrix</h2>
-        <div class="view-tagline">Political Power, Alliances, Party Reputation, and DM-Exclusive Standing Boons & Afflictions</div>
+        <div class="view-tagline">Political Power, Alliances, Party Reputation (Supabase Synced), and DM-Exclusive Standing Boons & Afflictions</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span class="meta-badge" id="faction-merchant-discount-badge" style="background: rgba(16,185,129,0.18); border-color: #10b981; color: #6ee7b7;">
+          🏪 Town Market Discount: ${discountPct}% ${discountPct >= 20 ? '(Sworn)' : discountPct >= 10 ? '(Allied)' : '(Standard)'}
+        </span>
       </div>
     </div>
     <div class="cards-grid" id="factions-grid-container"></div>

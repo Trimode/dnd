@@ -74,7 +74,7 @@ export function renderSocialView(container) {
         </div>
 
         <!-- Downtime Rest Controls -->
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <button class="btn btn-sm" id="social-short-rest-btn" title="Take a 1-hour Short Rest to spend hit dice and regain short-rest abilities">
             ☕ Short Rest
           </button>
@@ -88,6 +88,44 @@ export function renderSocialView(container) {
           ` : ''}
         </div>
       </header>
+
+      <!-- Tabletop Soundboard & Ambient Audio Mixer + Private Whisper Bar (Supabase Synced) -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0.75rem; margin-bottom: 0.85rem;">
+        <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.65rem 0.85rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
+            <strong style="font-size: 0.82rem; color: #7dd3fc;">🎵 Tabletop Soundboard &amp; Audio Mixer (DM Synced)</strong>
+            <span id="soundboard-track-label" style="font-size: 0.72rem; color: var(--text-gold);">Track: ${(worldState.getAmbientAudio ? worldState.getAmbientAudio().track : 'none')}</span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;">
+            <select id="soundboard-track-select" class="editor-input" style="font-size: 0.74rem; padding: 2px 6px; width: auto;" ${!isDm ? 'disabled' : ''}>
+              ${['none', 'tavern', 'rain', 'dungeon', 'boss'].map(t => `<option value="${t}" ${(worldState.getAmbientAudio && worldState.getAmbientAudio().track === t) ? 'selected' : ''}>${t === 'none' ? 'Silence' : t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="sword" style="font-size: 0.7rem; padding: 2px 6px;">⚔️ Clash</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="thunder" style="font-size: 0.7rem; padding: 2px 6px;">⚡ Thunder</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="spell" style="font-size: 0.7rem; padding: 2px 6px;">✨ Spell</button>
+            <button type="button" class="btn btn-sm soundboard-sfx-btn" data-sfx="fanfare" style="font-size: 0.7rem; padding: 2px 6px;">🎺 Fanfare</button>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-card); border: 1px solid rgba(168,85,247,0.35); border-radius: var(--radius-md); padding: 0.65rem 0.85rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+            <strong style="font-size: 0.82rem; color: #d8b4fe;">💬 Party Chat &amp; Private Whispers (Supabase)</strong>
+            <span style="font-size: 0.68rem; color: var(--text-muted);">Tip: /w @DM secret message</span>
+          </div>
+          <div id="supabase-chat-feed" style="max-height: 90px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; margin-bottom: 0.45rem;">
+            ${(worldState.getChatMessages ? worldState.getChatMessages(activeHero?.name || 'Adventurer', isDm) : []).slice(-6).map(m => `
+              <div style="padding: 2px 6px; border-radius: 4px; background: ${m.isWhisper ? 'rgba(168,85,247,0.16)' : 'var(--bg-tertiary)'};">
+                <strong style="color: ${m.isWhisper ? '#e879f9' : 'var(--text-gold)'};">${m.senderName}${m.isWhisper ? ` → ${m.recipientName} (Whisper)` : ''}:</strong>
+                <span style="color: var(--text-secondary);"> ${m.message}</span>
+              </div>
+            `).join('') || `<div style="color: var(--text-muted); font-style: italic;">No whispers or party messages yet.</div>`}
+          </div>
+          <form id="supabase-whisper-form" style="display: flex; gap: 0.35rem;">
+            <input type="text" id="supabase-whisper-input" class="editor-input" placeholder="Say to party or /w @DM ..." style="flex: 1; font-size: 0.76rem; padding: 3px 7px;">
+            <button type="submit" class="btn btn-sm btn-primary" style="font-size: 0.72rem; padding: 3px 9px;">Send</button>
+          </form>
+        </div>
+      </div>
 
       <!-- Main Three-Column Social Layout -->
       <div class="social-layout">
@@ -728,6 +766,41 @@ function bindSocialEvents(container, party, activeHero) {
 
       soundEngine.playDiceRoll(false);
       alert(`⚡ Push request for ${ability} ${type === 'save' ? 'Saving Throw' : 'Check'} sent to ${targetPlayerName}!`);
+    });
+  }
+
+  // 11. Tabletop Soundboard & Ambient Audio Mixer (Supabase)
+  const trackSel = container.querySelector('#soundboard-track-select');
+  if (trackSel) {
+    trackSel.addEventListener('change', async () => {
+      await worldState.setAmbientAudio({ track: trackSel.value });
+      if (soundEngine.setMuted) soundEngine.setMuted(trackSel.value === 'none');
+      if (soundEngine.playAmbience) soundEngine.playAmbience(trackSel.value);
+      renderSocialView(container);
+    });
+  }
+  container.querySelectorAll('.soundboard-sfx-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sfx = btn.getAttribute('data-sfx');
+      await worldState.setAmbientAudio({ sfx });
+      if (soundEngine.setMuted) soundEngine.setMuted(false);
+      if (soundEngine.playSfx) soundEngine.playSfx(sfx);
+    });
+  });
+
+  // 12. Party Chat & Private Whispers Form (Supabase)
+  const whisperForm = container.querySelector('#supabase-whisper-form');
+  if (whisperForm) {
+    whisperForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const inp = container.querySelector('#supabase-whisper-input');
+      const text = inp?.value.trim();
+      if (!text) return;
+      const isDm = Boolean(worldState.prefs.dmMode);
+      const senderName = isDm ? 'DM' : (activeHero?.name || 'Adventurer');
+      await worldState.sendChatMessage({ senderName, senderRole: isDm ? 'dm' : 'player', message: text });
+      inp.value = '';
+      renderSocialView(container);
     });
   }
 }

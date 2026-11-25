@@ -79,8 +79,74 @@ class ProceduralSoundEngine {
       case 'forest':
         this.createForestAmbience();
         break;
+      case 'tavern':
+        this.createFireAmbience();
+        break;
+      case 'rain':
+        this.createForestAmbience();
+        break;
+      case 'dungeon':
+        this.createEarthAmbience();
+        break;
+      case 'boss':
+        this.createFireAmbience();
+        this.createEarthAmbience();
+        break;
+      case 'none':
+        this.stopAmbience();
+        break;
       default:
         this.createFireAmbience();
+    }
+  }
+
+  setVolume(vol = 0.5) {
+    this.initContext();
+    const clamped = Math.max(0, Math.min(1, Number(vol) || 0));
+    if (this.gainNode && this.ctx && !this.isMuted) {
+      this.gainNode.gain.setTargetAtTime(clamped * 0.4, this.ctx.currentTime, 0.1);
+    }
+  }
+
+  playSfx(sfxId) {
+    this.initContext();
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    if (sfxId === 'sword') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(1200, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.18);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.24);
+    } else if (sfxId === 'thunder') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(95, now);
+      osc.frequency.exponentialRampToValueAtTime(32, now + 0.9);
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.95);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 1.0);
+    } else if (sfxId === 'spell') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.35);
+      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.48);
+    } else {
+      // Fanfare / Chime
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.setValueAtTime(880, now + 0.12);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      osc.connect(gain); gain.connect(this.gainNode);
+      osc.start(now); osc.stop(now + 0.58);
     }
   }
 

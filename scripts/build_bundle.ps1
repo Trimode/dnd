@@ -60,6 +60,7 @@ $views = @(
     "questView.js",
     "pantheonView.js",
     "editorView.js",
+    "levelUpModal.js",
     "partyView.js",
     "playerHeroView.js",
     "characterCreateView.js",
@@ -86,6 +87,8 @@ $appVer = if ($vMatch.Success) { $vMatch.Groups[1].Value } else { "0.6" }
 [void]$sb.AppendLine("    window.renderMapView = renderMapView;")
 [void]$sb.AppendLine("    window.renderCombatView = renderCombatView;")
 [void]$sb.AppendLine("    window.renderCharacterCreateView = renderCharacterCreateView;")
+[void]$sb.AppendLine("    window.openLevelUpModal = openLevelUpModal;")
+[void]$sb.AppendLine("    window.DND_LEVEL_UP_DATA = DND_LEVEL_UP_DATA;")
 [void]$sb.AppendLine("    window.supabaseDb = supabaseDb;")
 [void]$sb.AppendLine("    window.worldState = worldState;")
 [void]$sb.AppendLine("  }")

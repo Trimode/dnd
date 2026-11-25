@@ -2130,7 +2130,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.0';
+    this.version = '1.1';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2707,6 +2707,183 @@ class WorldStateManager {
     this.saveData();
 
     return newChar;
+  }
+
+  levelUpCharacter(charId, levelUpData = {}) {
+    if (!this.canControlCharacter(charId)) {
+      return { success: false, error: 'You do not have permission to level up this character.' };
+    }
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) {
+      return { success: false, error: 'Character not found.' };
+    }
+
+    const oldLevel = parseInt(char.level, 10) || 1;
+    if (oldLevel >= 20) {
+      return { success: false, error: 'Character is already at maximum level (20).' };
+    }
+    const newLevel = Math.min(20, oldLevel + 1);
+
+    if (!char.stats) {
+      char.stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    }
+
+    const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+    const oldConMod = getMod(char.stats.con);
+    const oldDexMod = getMod(char.stats.dex);
+    const oldWisMod = getMod(char.stats.wis);
+
+    // 1. Apply ASI / Half-Feat Ability Score Increases
+    const statIncreases = levelUpData.statIncreases || {};
+    const maxCap = newLevel >= 19 ? 22 : 20;
+    const appliedAsi = {};
+    ['str', 'dex', 'con', 'int', 'wis', 'cha'].forEach(stat => {
+      const inc = parseInt(statIncreases[stat], 10) || 0;
+      if (inc > 0) {
+        const before = parseInt(char.stats[stat], 10) || 10;
+        const after = Math.min(maxCap, before + inc);
+        char.stats[stat] = after;
+        appliedAsi[stat] = after - before;
+      }
+    });
+
+    const newConMod = getMod(char.stats.con);
+    const newDexMod = getMod(char.stats.dex);
+    const newWisMod = getMod(char.stats.wis);
+
+    // 2. Calculate Total HP Gain (Rolled/Fixed/Manual + CON + Retroactive CON + Tough/Dwarf)
+    const rawRoll = Number.isFinite(Number(levelUpData.hpRoll)) ? Number(levelUpData.hpRoll) : 6;
+    const perLevelHp = Math.max(1, rawRoll + newConMod);
+    const retroConBonus = Math.max(0, (newConMod - oldConMod) * oldLevel);
+
+    const existingFeats = Array.isArray(char.feats) ? char.feats : [];
+    const newFeatName = levelUpData.feat ? String(levelUpData.feat).trim() : '';
+    const alreadyHadTough = existingFeats.some(f => String(f).toLowerCase().includes('tough'));
+    const gainedToughNow = !alreadyHadTough && newFeatName.toLowerCase().includes('tough');
+    const toughBonus = gainedToughNow ? (2 * newLevel) : (alreadyHadTough ? 2 : 0);
+    const dwarfBonus = (char.species || '').toLowerCase().includes('dwarf') ? 1 : 0;
+
+    const totalHpGained = perLevelHp + retroConBonus + toughBonus + dwarfBonus;
+
+    char.level = newLevel;
+    char.hpMax = (parseInt(char.hpMax, 10) || 10) + totalHpGained;
+    char.hpCurrent = (parseInt(char.hpCurrent, 10) || 0) + totalHpGained;
+
+    // 3. Recalculate Derived Combat Stats
+    char.initiativeMod = newDexMod >= 0 ? `+${newDexMod}` : `${newDexMod}`;
+    char.passivePerception = 10 + newWisMod + (newFeatName.toLowerCase().includes('observant') ? 5 : 0);
+    char.passiveInsight = 10 + newWisMod;
+
+    // Update Unarmored Defense AC if relevant stats increased
+    const clsLower = (char.classRole || '').toLowerCase();
+    if (clsLower.includes('barbarian')) {
+      const unarmored = 10 + newDexMod + newConMod;
+      if (unarmored > (char.ac || 10)) char.ac = unarmored;
+    } else if (clsLower.includes('monk')) {
+      const unarmored = 10 + newDexMod + newWisMod;
+      if (unarmored > (char.ac || 10)) char.ac = unarmored;
+    } else if (newDexMod > oldDexMod && (char.ac || 10) < 16) {
+      char.ac = (char.ac || 10) + (newDexMod - oldDexMod);
+    }
+
+    // 4. Subclass
+    if (levelUpData.subclass && String(levelUpData.subclass).trim()) {
+      const sub = String(levelUpData.subclass).trim();
+      char.subclass = sub;
+      const baseClass = (char.classRole || 'Adventurer').split('(')[0].trim();
+      char.classRole = `${baseClass} (${sub})`;
+    }
+
+    // 5. Class Features
+    if (!Array.isArray(char.features)) char.features = [];
+    const newFeatures = Array.isArray(levelUpData.features) ? levelUpData.features : [];
+    newFeatures.forEach(feat => {
+      const label = typeof feat === 'string' ? feat : feat.name;
+      if (label && !char.features.includes(label)) {
+        char.features.push(label);
+      }
+    });
+
+    // 6. Feats
+    if (!Array.isArray(char.feats)) char.feats = [];
+    if (newFeatName && !char.feats.includes(newFeatName)) {
+      char.feats.push(newFeatName);
+    }
+
+    // 7. Spells & Spell Slots
+    if (!Array.isArray(char.spells)) char.spells = [];
+    const newSpells = Array.isArray(levelUpData.spells) ? levelUpData.spells : [];
+    newSpells.forEach(sp => {
+      const clean = String(sp).trim();
+      if (clean && !char.spells.includes(clean)) {
+        char.spells.push(clean);
+      }
+    });
+    if (levelUpData.spellSlots && Object.keys(levelUpData.spellSlots).length > 0) {
+      char.spellSlots = levelUpData.spellSlots;
+    }
+
+    // 8. Weapon Masteries
+    if (!Array.isArray(char.weaponMasteries)) char.weaponMasteries = [];
+    const newMasteries = Array.isArray(levelUpData.weaponMasteries) ? levelUpData.weaponMasteries : [];
+    newMasteries.forEach(m => {
+      const clean = String(m).trim();
+      if (clean && !char.weaponMasteries.includes(clean)) {
+        char.weaponMasteries.push(clean);
+      }
+    });
+
+    // 9. Append Level-Up Audit History
+    if (!Array.isArray(char.levelHistory)) char.levelHistory = [];
+    const historyRecord = {
+      fromLevel: oldLevel,
+      toLevel: newLevel,
+      hpGained: totalHpGained,
+      hpMethod: levelUpData.hpMethod || 'average',
+      hpRoll: rawRoll,
+      subclass: levelUpData.subclass || null,
+      feat: newFeatName || null,
+      asi: Object.keys(appliedAsi).length > 0 ? appliedAsi : null,
+      features: newFeatures.map(f => (typeof f === 'string' ? f : f.name)),
+      spells: newSpells,
+      weaponMasteries: newMasteries,
+      timestamp: Date.now()
+    };
+    char.levelHistory.unshift(historyRecord);
+
+    // 10. Log HP Roll & Level-Up Celebration to Synchronized Dice Log (persisted in Supabase)
+    if (!this.data.diceRollLogs) this.data.diceRollLogs = [];
+    const summaryBits = [`+${totalHpGained} Max HP`];
+    if (levelUpData.subclass) summaryBits.push(`Subclass: ${levelUpData.subclass}`);
+    if (newFeatName) summaryBits.push(`Feat: ${newFeatName}`);
+    if (Object.keys(appliedAsi).length > 0) {
+      summaryBits.push('ASI: ' + Object.entries(appliedAsi).map(([k, v]) => `+${v} ${k.toUpperCase()}`).join(', '));
+    }
+    if (newSpells.length > 0) summaryBits.push(`Spells: ${newSpells.join(', ')}`);
+
+    this.data.diceRollLogs.unshift({
+      id: 'roll_lvl_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '⬆️',
+      rollType: 'level_up',
+      label: `Level Up: Lv ${oldLevel} → Lv ${newLevel}`,
+      formula: `${levelUpData.hpMethod === 'roll' ? 'Rolled' : levelUpData.hpMethod === 'manual' ? 'Manual' : 'Avg'} (${rawRoll}) + CON (${newConMod >= 0 ? '+' + newConMod : newConMod})${retroConBonus ? ' + Retro CON (+' + retroConBonus + ')' : ''}${toughBonus ? ' + Tough (+' + toughBonus + ')' : ''}`,
+      d20Result: null,
+      total: totalHpGained,
+      dc: null,
+      success: true,
+      isCrit: false,
+      isNat1: false,
+      advantageMode: 'normal',
+      note: summaryBits.join(' • '),
+      timestamp: Date.now(),
+      timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    });
+    if (this.data.diceRollLogs.length > 80) this.data.diceRollLogs.pop();
+
+    // Single saveData() persists both party_characters + dice_roll_logs to Supabase & refreshes UI once
+    this.saveData();
+    return { success: true, character: char, historyRecord };
   }
 
   deletePartyCharacter(charId) {
@@ -5029,6 +5206,936 @@ function renderEditorView(container) {
   });
 }
 
+  // COMPONENT: levelUpModal.js
+/**
+ * D&D 5.5e Character Level-Up Wizard Modal
+ * Supports HP rolling / fixed average / manual roll, class features by level,
+ * subclass selection, Ability Score Improvements (ASI), 5.5e Feats & Epic Boons,
+ * new Spells & Spell Slot progression, Weapon Masteries, and Supabase cloud persistence.
+ */
+const DND_LEVEL_UP_DATA = {
+  classes: {
+    Barbarian: {
+      hitDie: 12,
+      caster: 'none',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Path of the Berserker', 'Path of the Wild Heart', 'Path of the World Tree', 'Path of the Zealot'],
+      featuresByLevel: {
+        2: ['Danger Sense', 'Reckless Attack'],
+        3: ['Barbarian Subclass', 'Primal Knowledge'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Extra Attack', 'Fast Movement (+10 ft)'],
+        6: ['Subclass Feature'],
+        7: ['Feral Instinct', 'Instinctive Pounce'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Brutal Strike (+1d10)'],
+        10: ['Subclass Feature'],
+        11: ['Relentless Rage'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Improved Brutal Strike'],
+        14: ['Subclass Feature'],
+        15: ['Persistent Rage'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Improved Brutal Strike (+2d10)'],
+        18: ['Indomitable Might'],
+        19: ['Epic Boon'],
+        20: ['Primal Champion (+4 STR, +4 CON)']
+      }
+    },
+    Bard: {
+      hitDie: 8,
+      caster: 'full',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['College of Dance', 'College of Glamour', 'College of Lore', 'College of Valor'],
+      featuresByLevel: {
+        2: ['Expertise', 'Jack of All Trades'],
+        3: ['Bard Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Font of Inspiration (d8)'],
+        6: ['Subclass Feature'],
+        7: ['Countercharm'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Expertise (2 more)'],
+        10: ['Magical Secrets (d10)'],
+        11: ['6th-Level Spell Slot'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['7th-Level Spell Slot'],
+        14: ['Subclass Feature'],
+        15: ['Bardic Inspiration (d12)'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['9th-Level Spell Slot'],
+        18: ['Superior Inspiration'],
+        19: ['Epic Boon'],
+        20: ['Words of Creation']
+      }
+    },
+    Cleric: {
+      hitDie: 8,
+      caster: 'full',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Life Domain', 'Light Domain', 'Trickery Domain', 'War Domain'],
+      featuresByLevel: {
+        2: ['Channel Divinity', 'Divine Spark / Turn Undead'],
+        3: ['Cleric Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Sear Undead'],
+        6: ['Subclass Feature', 'Channel Divinity (2/rest)'],
+        7: ['Blessed Strikes'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['5th-Level Spell Slot'],
+        10: ['Divine Intervention'],
+        11: ['6th-Level Spell Slot'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['7th-Level Spell Slot'],
+        14: ['Improved Blessed Strikes'],
+        15: ['8th-Level Spell Slot'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Subclass Feature (Capstone)'],
+        18: ['Channel Divinity (3/rest)'],
+        19: ['Epic Boon'],
+        20: ['Greater Divine Intervention']
+      }
+    },
+    Druid: {
+      hitDie: 8,
+      caster: 'full',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Circle of the Land', 'Circle of the Moon', 'Circle of the Sea', 'Circle of the Stars'],
+      featuresByLevel: {
+        2: ['Wild Shape', 'Wild Companion'],
+        3: ['Druid Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Wild Resurgence'],
+        6: ['Subclass Feature'],
+        7: ['Elemental Fury'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['5th-Level Spell Slot'],
+        10: ['Subclass Feature'],
+        11: ['6th-Level Spell Slot'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['7th-Level Spell Slot'],
+        14: ['Subclass Feature'],
+        15: ['Improved Elemental Fury'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['9th-Level Spell Slot'],
+        18: ['Beast Spells'],
+        19: ['Epic Boon'],
+        20: ['Archdruid']
+      }
+    },
+    Fighter: {
+      hitDie: 10,
+      caster: 'none',
+      asiLevels: [4, 6, 8, 12, 14, 16, 19],
+      subclasses: ['Battle Master', 'Champion', 'Eldritch Knight', 'Psi Warrior'],
+      featuresByLevel: {
+        2: ['Action Surge', 'Tactical Mind'],
+        3: ['Fighter Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Extra Attack', 'Tactical Shift'],
+        6: ['Ability Score Improvement / Feat'],
+        7: ['Subclass Feature'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Indomitable (1/long rest)', 'Tactical Master'],
+        10: ['Subclass Feature'],
+        11: ['Two Extra Attacks (3 Attacks)'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Indomitable (2/long rest)', 'Studied Attacks'],
+        14: ['Ability Score Improvement / Feat'],
+        15: ['Subclass Feature'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Action Surge (2/rest)', 'Indomitable (3/long rest)'],
+        18: ['Subclass Feature'],
+        19: ['Epic Boon'],
+        20: ['Three Extra Attacks (4 Attacks)']
+      }
+    },
+    Monk: {
+      hitDie: 8,
+      caster: 'none',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Warrior of Mercy', 'Warrior of Shadow', 'Warrior of the Elements', 'Warrior of the Open Hand'],
+      featuresByLevel: {
+        2: ["Monk's Focus", 'Unarmored Movement (+10 ft)', 'Uncanny Metabolism'],
+        3: ['Monk Subclass', 'Deflect Attacks'],
+        4: ['Ability Score Improvement / Feat', 'Slow Fall'],
+        5: ['Extra Attack', 'Stunning Strike', 'Martial Arts (d8)'],
+        6: ['Empowered Strikes', 'Subclass Feature'],
+        7: ['Evasion'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Acrobatic Movement'],
+        10: ['Heightened Focus', 'Self-Restoration'],
+        11: ['Subclass Feature', 'Martial Arts (d10)'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Deflect Energy'],
+        14: ['Disciplined Survivor'],
+        15: ['Perfect Focus'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Subclass Feature', 'Martial Arts (d12)'],
+        18: ['Superior Defense'],
+        19: ['Epic Boon'],
+        20: ['Body and Mind (+4 DEX, +4 WIS)']
+      }
+    },
+    Paladin: {
+      hitDie: 10,
+      caster: 'half',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Oath of Devotion', 'Oath of Glory', 'Oath of the Ancients', 'Oath of Vengeance'],
+      featuresByLevel: {
+        2: ['Fighting Style', "Paladin's Smite"],
+        3: ['Paladin Subclass', 'Channel Divinity'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Extra Attack', 'Faithful Steed'],
+        6: ['Aura of Protection'],
+        7: ['Subclass Feature'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Abjure Foes'],
+        10: ['Aura of Courage'],
+        11: ['Radiant Strikes (+1d8)'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['4th-Level Spell Slot'],
+        14: ['Restoring Touch'],
+        15: ['Subclass Feature'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['5th-Level Spell Slot'],
+        18: ['Aura Expansion (30 ft)'],
+        19: ['Epic Boon'],
+        20: ['Subclass Capstone']
+      }
+    },
+    Ranger: {
+      hitDie: 10,
+      caster: 'half',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Beast Master', 'Fey Wanderer', 'Gloom Stalker', 'Hunter'],
+      featuresByLevel: {
+        2: ['Deft Explorer', 'Fighting Style'],
+        3: ['Ranger Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Extra Attack'],
+        6: ['Roving (+10 ft Speed, Climb & Swim)'],
+        7: ['Subclass Feature'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Expertise (2 Skills)'],
+        10: ['Tireless'],
+        11: ['Subclass Feature'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Relentless Hunter'],
+        14: ["Nature's Veil"],
+        15: ['Subclass Feature'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Precise Hunter'],
+        18: ['Feral Senses'],
+        19: ['Epic Boon'],
+        20: ['Foe Slayer']
+      }
+    },
+    Rogue: {
+      hitDie: 8,
+      caster: 'none',
+      asiLevels: [4, 8, 10, 12, 16, 19],
+      subclasses: ['Arcane Trickster', 'Assassin', 'Soulknife', 'Thief'],
+      featuresByLevel: {
+        2: ['Cunning Action'],
+        3: ['Rogue Subclass', 'Steady Aim', 'Sneak Attack (2d6)'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Cunning Strike', 'Uncanny Dodge', 'Sneak Attack (3d6)'],
+        6: ['Expertise (2 more)'],
+        7: ['Evasion', 'Reliable Talent', 'Sneak Attack (4d6)'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Subclass Feature', 'Sneak Attack (5d6)'],
+        10: ['Ability Score Improvement / Feat'],
+        11: ['Improved Cunning Strike', 'Sneak Attack (6d6)'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Subclass Feature', 'Sneak Attack (7d6)'],
+        14: ['Devious Strikes'],
+        15: ['Slippery Mind', 'Sneak Attack (8d6)'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Subclass Feature', 'Sneak Attack (9d6)'],
+        18: ['Elusive'],
+        19: ['Epic Boon', 'Sneak Attack (10d6)'],
+        20: ['Stroke of Luck']
+      }
+    },
+    Sorcerer: {
+      hitDie: 6,
+      caster: 'full',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Aberrant Sorcery', 'Clockwork Sorcery', 'Draconic Sorcery', 'Wild Magic Sorcery'],
+      featuresByLevel: {
+        2: ['Font of Magic (Sorcery Points)', 'Metamagic (2 options)'],
+        3: ['Sorcerer Subclass'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Sorcerous Restoration'],
+        6: ['Subclass Feature'],
+        7: ['Sorcery Incarnate'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['5th-Level Spell Slot'],
+        10: ['Metamagic (2 more options)'],
+        11: ['6th-Level Spell Slot'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['7th-Level Spell Slot'],
+        14: ['Subclass Feature'],
+        15: ['8th-Level Spell Slot'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Metamagic (2 more)', '9th-Level Spell Slot'],
+        18: ['Subclass Feature'],
+        19: ['Epic Boon'],
+        20: ['Arcane Apotheosis']
+      }
+    },
+    Warlock: {
+      hitDie: 8,
+      caster: 'pact',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Archfey Patron', 'Celestial Patron', 'Fiend Patron', 'Great Old One Patron'],
+      featuresByLevel: {
+        2: ['Magical Cunning', 'Eldritch Invocations (3 total)'],
+        3: ['Warlock Subclass', '2nd-Level Pact Slots'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['3rd-Level Pact Slots', 'Eldritch Invocations (5 total)'],
+        6: ['Subclass Feature'],
+        7: ['4th-Level Pact Slots', 'Eldritch Invocations (6 total)'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['Contact Patron', '5th-Level Pact Slots'],
+        10: ['Subclass Feature'],
+        11: ['Mystic Arcanum (6th-Level)'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['Mystic Arcanum (7th-Level)'],
+        14: ['Subclass Feature'],
+        15: ['Mystic Arcanum (8th-Level)'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['Mystic Arcanum (9th-Level)', '4 Pact Slots'],
+        18: ['Eldritch Invocations (10 total)'],
+        19: ['Epic Boon'],
+        20: ['Eldritch Master']
+      }
+    },
+    Wizard: {
+      hitDie: 6,
+      caster: 'full',
+      asiLevels: [4, 8, 12, 16, 19],
+      subclasses: ['Abjurer', 'Diviner', 'Evoker', 'Illusionist'],
+      featuresByLevel: {
+        2: ['Scholar (Expertise in Arcane Skill)'],
+        3: ['Wizard Subclass', '2nd-Level Spell Slots'],
+        4: ['Ability Score Improvement / Feat'],
+        5: ['Memorize Spell', '3rd-Level Spell Slots'],
+        6: ['Subclass Feature'],
+        7: ['4th-Level Spell Slots'],
+        8: ['Ability Score Improvement / Feat'],
+        9: ['5th-Level Spell Slots'],
+        10: ['Subclass Feature'],
+        11: ['6th-Level Spell Slots'],
+        12: ['Ability Score Improvement / Feat'],
+        13: ['7th-Level Spell Slots'],
+        14: ['Subclass Feature'],
+        15: ['8th-Level Spell Slots'],
+        16: ['Ability Score Improvement / Feat'],
+        17: ['9th-Level Spell Slots'],
+        18: ['Spell Mastery'],
+        19: ['Epic Boon'],
+        20: ['Signature Spells']
+      }
+    }
+  },
+
+  feats: [
+    { name: 'Alert', halfStat: null, desc: 'Add Proficiency Bonus to Initiative; swap initiative with an ally.' },
+    { name: 'Tough', halfStat: null, desc: '+2 Max HP per character level (retroactive and on every future level up).' },
+    { name: 'War Caster', halfStat: ['int', 'wis', 'cha'], desc: '+1 INT/WIS/CHA, Advantage on Concentration saves, cast spells as Opportunity Attacks.' },
+    { name: 'Great Weapon Master', halfStat: ['str'], desc: '+1 STR, add Proficiency Bonus to Heavy weapon damage, bonus action Cleave on crit/kill.' },
+    { name: 'Sharpshooter', halfStat: ['dex'], desc: '+1 DEX, bypass cover, no disadvantage at long range or in melee.' },
+    { name: 'Sentinel', halfStat: ['str', 'dex'], desc: '+1 STR/DEX, Opportunity Attacks reduce target speed to 0 and punish Disengage.' },
+    { name: 'Fey-Touched', halfStat: ['int', 'wis', 'cha'], desc: '+1 INT/WIS/CHA, learn Misty Step + 1 Divination/Enchantment 1st-level spell.' },
+    { name: 'Shadow-Touched', halfStat: ['int', 'wis', 'cha'], desc: '+1 INT/WIS/CHA, learn Invisibility + 1 Illusion/Necromancy 1st-level spell.' },
+    { name: 'Resilient', halfStat: ['str', 'dex', 'con', 'int', 'wis', 'cha'], desc: '+1 to chosen ability and gain Saving Throw proficiency in that ability.' },
+    { name: 'Polearm Master', halfStat: ['str', 'dex'], desc: '+1 STR/DEX, bonus action butt-end strike (1d4), reactive strike on enemy approach.' },
+    { name: 'Shield Master', halfStat: ['str'], desc: '+1 STR, Shield Bash (Push/Prone) after Attack, negate DEX save damage with reaction.' },
+    { name: 'Mage Slayer', halfStat: ['str', 'dex'], desc: '+1 STR/DEX, Concentration Breaker, Guarded Mind auto-succeed once per short rest.' },
+    { name: 'Observant', halfStat: ['int', 'wis'], desc: '+1 INT/WIS, +5 Passive Perception, Quick Search as a Bonus Action.' },
+    { name: 'Telekinetic', halfStat: ['int', 'wis', 'cha'], desc: '+1 INT/WIS/CHA, invisible Mage Hand, Bonus Action 5-ft telekinetic shove.' },
+    { name: 'Dual Wielder', halfStat: ['str', 'dex'], desc: '+1 STR/DEX, Enhanced Dual Wielding bonus attack with non-Heavy weapons.' },
+    { name: 'Heavy Armor Master', halfStat: ['str', 'con'], desc: '+1 STR/CON, reduce Bludgeoning/Piercing/Slashing damage by Proficiency Bonus.' },
+    { name: 'Lucky', halfStat: null, desc: 'Gain Luck Points equal to Proficiency Bonus to grant Advantage or impose Disadvantage.' },
+    { name: 'Boon of Combat Prowess (Epic)', halfStat: ['str', 'dex', 'con', 'int', 'wis', 'cha'], desc: 'Lvl 19+: +1 any stat (cap 30); once per turn, turn a missed attack into a hit.' },
+    { name: 'Boon of Dimensional Travel (Epic)', halfStat: ['str', 'dex', 'con', 'int', 'wis', 'cha'], desc: 'Lvl 19+: +1 any stat; teleport 30 ft immediately after Attack or Magic action.' }
+  ],
+
+  spellsByLevel: {
+    0: ['Fire Bolt', 'Eldritch Blast', 'Guidance', 'Mage Hand', 'Minor Illusion', 'Prestidigitation', 'Ray of Frost', 'Sacred Flame', 'Toll the Dead', 'Vicious Mockery', 'Booming Blade', 'Thorn Whip'],
+    1: ['Shield', 'Magic Missile', 'Healing Word', 'Cure Wounds', 'Bless', 'Guiding Bolt', 'Hunter\'s Mark', 'Hex', 'Thunderwave', 'Chromatic Orb', 'Faerie Fire', 'Find Familiar', 'Absorb Elements', 'Silvery Barbs'],
+    2: ['Misty Step', 'Spiritual Weapon', 'Hold Person', 'Invisibility', 'Pass without Trace', 'Web', 'Mirror Image', 'Moonbeam', 'Scorching Ray', 'Lesser Restoration', 'Shatter', 'Aid'],
+    3: ['Fireball', 'Counterspell', 'Spirit Guardians', 'Revivify', 'Haste', 'Fly', 'Hypnotic Pattern', 'Lightning Bolt', 'Dispel Magic', 'Call Lightning', 'Aura of Vitality', 'Conjure Animals'],
+    4: ['Polymorph', 'Dimension Door', 'Greater Invisibility', 'Banishment', 'Wall of Fire', 'Death Ward', 'Blight', 'Ice Storm', 'Find Greater Steed'],
+    5: ['Wall of Force', 'Cone of Cold', 'Greater Restoration', 'Mass Cure Wounds', 'Hold Monster', 'Synaptic Static', 'Steel Wind Strike', 'Animate Objects', 'Teleportation Circle'],
+    6: ['Chain Lightning', 'Disintegrate', 'Heal', 'Sunbeam', 'Globe of Invulnerability', 'Heroes\' Feast', 'True Seeing'],
+    7: ['Forcecage', 'Teleport', 'Finger of Death', 'Fire Storm', 'Resurrection', 'Prismatic Spray'],
+    8: ['Maze', 'Mind Blank', 'Sunburst', 'Holy Aura', 'Dominate Monster'],
+    9: ['Wish', 'Meteor Swarm', 'Power Word Kill', 'True Resurrection', 'Foresight', 'Time Stop']
+  },
+
+  weaponMasteries: [
+    'Cleave (Greataxe / Halberd)',
+    'Graze (Glaive / Greatsword)',
+    'Nick (Dagger / Scimitar)',
+    'Push (Pike / Greatclub)',
+    'Sap (Longsword / Mace / Flail)',
+    'Slow (Longbow / Whip / Club)',
+    'Topple (Battleaxe / Warhammer / Quarterstaff)',
+    'Vex (Rapier / Shortsword / Handaxe)'
+  ],
+
+  getProficiencyBonus(level) {
+    return Math.ceil((parseInt(level, 10) || 1) / 4) + 1;
+  },
+
+  resolveClassKey(classRole) {
+    const raw = String(classRole || 'Fighter').toLowerCase();
+    const keys = Object.keys(this.classes);
+    return keys.find(k => raw.includes(k.toLowerCase())) || 'Fighter';
+  },
+
+  getSpellSlotsForLevel(casterType, level) {
+    const lvl = Math.max(1, Math.min(20, parseInt(level, 10) || 1));
+    if (casterType === 'none') return {};
+    if (casterType === 'pact') {
+      const slotCount = lvl === 1 ? 1 : lvl < 11 ? 2 : lvl < 17 ? 3 : 4;
+      const slotLvl = Math.min(5, Math.ceil(lvl / 2));
+      return { [`Pact Lvl ${slotLvl}`]: slotCount };
+    }
+    const eff = casterType === 'half' ? Math.ceil(lvl / 2) : lvl;
+    const fullTable = {
+      1: { 1: 2 },
+      2: { 1: 3 },
+      3: { 1: 4, 2: 2 },
+      4: { 1: 4, 2: 3 },
+      5: { 1: 4, 2: 3, 3: 2 },
+      6: { 1: 4, 2: 3, 3: 3 },
+      7: { 1: 4, 2: 3, 3: 3, 4: 1 },
+      8: { 1: 4, 2: 3, 3: 3, 4: 2 },
+      9: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
+      10: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
+      11: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1 },
+      12: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1 },
+      13: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1 },
+      14: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1 },
+      15: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1 },
+      16: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1 },
+      17: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1, 9: 1 },
+      18: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 1, 9: 1 },
+      19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 1, 8: 1, 9: 1 },
+      20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 2, 8: 1, 9: 1 }
+    };
+    return fullTable[Math.min(20, eff)] || {};
+  },
+
+  getMaxSpellLevel(casterType, level) {
+    if (casterType === 'none') return 0;
+    if (casterType === 'pact') return Math.min(5, Math.ceil(level / 2));
+    const slots = this.getSpellSlotsForLevel(casterType, level);
+    const lvls = Object.keys(slots).map(Number).filter(n => !isNaN(n));
+    return lvls.length > 0 ? Math.max(...lvls) : 1;
+  }
+};
+function openLevelUpModal(charId, onComplete = null) {
+  const char = (worldState.data.partyCharacters || []).find(c => c.id === charId);
+  if (!char) {
+    alert('Character not found.');
+    return;
+  }
+  if (!worldState.canControlCharacter(char.id)) {
+    alert('You can only level up your own hero (or unlock Dungeon Master mode).');
+    return;
+  }
+  const currentLevel = parseInt(char.level, 10) || 1;
+  if (currentLevel >= 20) {
+    alert(`${char.name} has already reached maximum level (Level 20)!`);
+    return;
+  }
+
+  const nextLevel = currentLevel + 1;
+  const classKey = DND_LEVEL_UP_DATA.resolveClassKey(char.classRole);
+  const classInfo = DND_LEVEL_UP_DATA.classes[classKey];
+  const fixedAvg = Math.floor(classInfo.hitDie / 2) + 1;
+  const isAsiLevel = classInfo.asiLevels.includes(nextLevel);
+  const needsSubclass = nextLevel === 3 || (!char.subclass && nextLevel >= 3);
+  const isCaster = classInfo.caster !== 'none' || (char.classRole || '').toLowerCase().includes('eldritch') || (char.classRole || '').toLowerCase().includes('trickster');
+  const maxSpellLvl = isCaster ? Math.max(1, DND_LEVEL_UP_DATA.getMaxSpellLevel(classInfo.caster === 'none' ? 'half' : classInfo.caster, nextLevel)) : 0;
+  const newSpellSlots = isCaster ? DND_LEVEL_UP_DATA.getSpellSlotsForLevel(classInfo.caster === 'none' ? 'half' : classInfo.caster, nextLevel) : {};
+  const unlockedFeatures = classInfo.featuresByLevel[nextLevel] || [`${classKey} Class Progression`];
+
+  const state = {
+    hpMethod: 'average', // 'average' | 'roll' | 'manual'
+    hpRoll: fixedAvg,
+    hasRolledHp: false,
+    subclass: char.subclass || '',
+    customSubclass: '',
+    grantAsiOrFeat: isAsiLevel,
+    asiMode: 'asi', // 'asi' | 'feat'
+    asiAlloc: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+    selectedFeat: '',
+    customFeat: '',
+    halfFeatStat: '',
+    selectedSpells: [],
+    customSpell: '',
+    spellFilterLevel: Math.min(maxSpellLvl, 1),
+    selectedMastery: ''
+  };
+
+  // Ensure overlay container exists
+  let modal = document.getElementById('character-level-up-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'character-level-up-modal';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+
+  const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+  const fmtMod = (m) => (m >= 0 ? `+${m}` : `${m}`);
+
+  function getPendingStatIncreases() {
+    const inc = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
+    if (!state.grantAsiOrFeat) return inc;
+    if (state.asiMode === 'asi') {
+      Object.keys(inc).forEach(k => { inc[k] = state.asiAlloc[k] || 0; });
+    } else if (state.asiMode === 'feat' && state.halfFeatStat) {
+      inc[state.halfFeatStat] = 1;
+    }
+    return inc;
+  }
+
+  function getProjectedStats() {
+    const inc = getPendingStatIncreases();
+    const out = {};
+    ['str', 'dex', 'con', 'int', 'wis', 'cha'].forEach(k => {
+      out[k] = Math.min(nextLevel >= 19 ? 22 : 20, (parseInt(char.stats?.[k], 10) || 10) + inc[k]);
+    });
+    return out;
+  }
+
+  function getProjectedHpGain() {
+    const oldConMod = getMod(char.stats?.con || 10);
+    const projStats = getProjectedStats();
+    const newConMod = getMod(projStats.con);
+    const perLvl = Math.max(1, (parseInt(state.hpRoll, 10) || 1) + newConMod);
+    const retroCon = Math.max(0, (newConMod - oldConMod) * currentLevel);
+    const featName = (state.grantAsiOrFeat && state.asiMode === 'feat') ? (state.customFeat || state.selectedFeat) : '';
+    const hadTough = (char.feats || []).some(f => String(f).toLowerCase().includes('tough'));
+    const gainedTough = !hadTough && featName.toLowerCase().includes('tough');
+    const toughBonus = gainedTough ? (2 * nextLevel) : (hadTough ? 2 : 0);
+    const dwarfBonus = (char.species || '').toLowerCase().includes('dwarf') ? 1 : 0;
+    return {
+      total: perLvl + retroCon + toughBonus + dwarfBonus,
+      newConMod,
+      retroCon,
+      toughBonus,
+      dwarfBonus
+    };
+  }
+
+  function renderModal() {
+    const projStats = getProjectedStats();
+    const hpInfo = getProjectedHpGain();
+    const oldProf = DND_LEVEL_UP_DATA.getProficiencyBonus(currentLevel);
+    const newProf = DND_LEVEL_UP_DATA.getProficiencyBonus(nextLevel);
+    const asiSpent = Object.values(state.asiAlloc).reduce((a, b) => a + b, 0);
+    const selectedFeatObj = DND_LEVEL_UP_DATA.feats.find(f => f.name === state.selectedFeat);
+
+    modal.innerHTML = `
+      <div class="modal-card" style="max-width: 820px; max-height: 90vh;">
+        <div class="modal-header" style="background: linear-gradient(90deg, rgba(212, 175, 55, 0.2), rgba(56, 189, 248, 0.12)); border-bottom: 1px solid var(--accent-gold);">
+          <div>
+            <h3 style="margin: 0; color: var(--text-gold); font-size: 1.25rem;">
+              ⬆️ Level Up: ${char.name} (Level ${currentLevel} → Level ${nextLevel})
+            </h3>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+              ${char.species} • ${classKey} (Hit Die: d${classInfo.hitDie}) • Proficiency Bonus: +${oldProf}${newProf > oldProf ? ` → <strong style="color:#81c784;">+${newProf}</strong>` : ''}
+            </div>
+          </div>
+          <button class="close-btn" id="close-level-up-modal">&times;</button>
+        </div>
+
+        <div class="modal-body" style="padding: 1.25rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.25rem;">
+
+          <!-- 1. Features Gained at New Level -->
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
+            <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-gold); margin-bottom: 0.5rem;">
+              1. Class Abilities & Features Gained at Level ${nextLevel}
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.45rem;">
+              ${unlockedFeatures.map(f => `
+                <span style="background: rgba(212, 175, 55, 0.16); border: 1px solid rgba(212, 175, 55, 0.45); color: var(--text-gold); padding: 0.25rem 0.65rem; border-radius: var(--radius-full); font-size: 0.82rem; font-weight: 600;">
+                  ✦ ${f}
+                </span>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- 2. Hit Points Increase (Roll / Fixed Average / Manual) -->
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+              <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-gold);">
+                2. Hit Points Increase (d${classInfo.hitDie} + CON ${fmtMod(hpInfo.newConMod)})
+              </div>
+              <div style="font-size: 0.95rem; font-weight: 700; color: #81c784;">
+                +${hpInfo.total} HP (Max HP: ${char.hpMax} → ${char.hpMax + hpInfo.total})
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+              <button type="button" class="btn btn-sm ${state.hpMethod === 'average' ? 'btn-primary' : ''}" data-hp-method="average">
+                📊 Fixed Average (${fixedAvg} + CON)
+              </button>
+              <button type="button" class="btn btn-sm ${state.hpMethod === 'roll' ? 'btn-primary' : ''}" data-hp-method="roll" id="btn-lvl-roll-hp">
+                🎲 Roll 1d${classInfo.hitDie} for HP ${state.hpMethod === 'roll' && state.hasRolledHp ? `(Rolled: ${state.hpRoll})` : ''}
+              </button>
+              <button type="button" class="btn btn-sm ${state.hpMethod === 'manual' ? 'btn-primary' : ''}" data-hp-method="manual">
+                ✏️ Manual Table Roll
+              </button>
+            </div>
+
+            ${state.hpMethod === 'manual' ? `
+              <div style="display: flex; align-items: center; gap: 0.6rem;">
+                <label for="lvl-manual-hp-input" style="font-size: 0.85rem;">Die Result (1–${classInfo.hitDie}):</label>
+                <input type="number" id="lvl-manual-hp-input" class="form-control" min="1" max="${classInfo.hitDie}" value="${state.hpRoll}" style="width: 90px; text-align: center; font-weight: 700;">
+              </div>
+            ` : ''}
+
+            ${(hpInfo.retroCon > 0 || hpInfo.toughBonus > 0 || hpInfo.dwarfBonus > 0) ? `
+              <div style="margin-top: 0.5rem; font-size: 0.78rem; color: #a5d6a7;">
+                Bonuses applied:
+                ${hpInfo.retroCon > 0 ? ` • Retroactive CON (+${hpInfo.retroCon})` : ''}
+                ${hpInfo.toughBonus > 0 ? ` • Tough Feat (+${hpInfo.toughBonus})` : ''}
+                ${hpInfo.dwarfBonus > 0 ? ` • Dwarven Toughness (+${hpInfo.dwarfBonus})` : ''}
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- 3. Subclass Selection (Level 3 or Unchosen) -->
+          ${needsSubclass ? `
+            <div style="background: var(--bg-tertiary); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: var(--radius-md); padding: 1rem;">
+              <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: #38bdf8; margin-bottom: 0.6rem;">
+                3. Choose Your ${classKey} Subclass (5.5e)
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;">
+                <select id="lvl-subclass-select" class="form-control">
+                  <option value="">-- Select Official 5.5e Subclass --</option>
+                  ${classInfo.subclasses.map(sc => `<option value="${sc}" ${state.subclass === sc ? 'selected' : ''}>${sc}</option>`).join('')}
+                </select>
+                <input type="text" id="lvl-subclass-custom" class="form-control" placeholder="Or enter custom subclass..." value="${state.customSubclass}">
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- 4. Ability Score Improvement (ASI) OR 5.5e Feat -->
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem;">
+              <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-gold);">
+                4. Ability Score Improvement (ASI) or 5.5e Feat
+              </div>
+              ${!isAsiLevel ? `
+                <label style="font-size: 0.78rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+                  <input type="checkbox" id="lvl-toggle-bonus-asi" ${state.grantAsiOrFeat ? 'checked' : ''}>
+                  Grant Bonus / DM-Awarded Feat or ASI
+                </label>
+              ` : `<span style="font-size: 0.75rem; color: #81c784; font-weight: 700;">Unlocked at Level ${nextLevel}!</span>`}
+            </div>
+
+            ${state.grantAsiOrFeat ? `
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.85rem;">
+                <button type="button" class="btn btn-sm ${state.asiMode === 'asi' ? 'btn-primary' : ''}" data-asi-mode="asi">
+                  Ability Score Improvement (+2 Total)
+                </button>
+                <button type="button" class="btn btn-sm ${state.asiMode === 'feat' ? 'btn-primary' : ''}" data-asi-mode="feat">
+                  Choose a 5.5e Feat / Epic Boon
+                </button>
+              </div>
+
+              ${state.asiMode === 'asi' ? `
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.6rem;">
+                  Points Remaining: <strong style="color: ${2 - asiSpent === 0 ? '#81c784' : 'var(--text-gold)'};">${2 - asiSpent} / 2</strong>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.4rem; text-align: center;">
+                  ${['str', 'dex', 'con', 'int', 'wis', 'cha'].map(stat => {
+                    const base = parseInt(char.stats?.[stat], 10) || 10;
+                    const inc = state.asiAlloc[stat] || 0;
+                    const proj = projStats[stat];
+                    return `
+                      <div style="background: var(--bg-card); padding: 0.4rem; border-radius: var(--radius-sm); border: 1px solid ${inc > 0 ? 'var(--accent-gold)' : 'var(--border-subtle)'};">
+                        <div style="font-size: 0.7rem; font-weight: 700; color: var(--text-gold);">${stat.toUpperCase()}</div>
+                        <div style="font-size: 1rem; font-weight: 700;">${proj} <span style="font-size: 0.7rem; color: #81c784;">(${fmtMod(getMod(proj))})</span></div>
+                        <div style="display: flex; justify-content: center; gap: 0.25rem; margin-top: 0.25rem;">
+                          <button type="button" class="btn btn-sm lvl-asi-dec" data-stat="${stat}" style="padding: 1px 6px;" ${inc <= 0 ? 'disabled' : ''}>-</button>
+                          <button type="button" class="btn btn-sm lvl-asi-inc" data-stat="${stat}" style="padding: 1px 6px;" ${(asiSpent >= 2 || proj >= (nextLevel >= 19 ? 22 : 20)) ? 'disabled' : ''}>+</button>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              ` : `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-bottom: 0.5rem;">
+                  <select id="lvl-feat-select" class="form-control">
+                    <option value="">-- Choose a 5.5e Feat --</option>
+                    ${DND_LEVEL_UP_DATA.feats.map(f => `<option value="${f.name}" ${state.selectedFeat === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
+                  </select>
+                  <input type="text" id="lvl-feat-custom" class="form-control" placeholder="Or enter custom feat..." value="${state.customFeat}">
+                </div>
+                ${selectedFeatObj ? `
+                  <div style="font-size: 0.8rem; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); margin-bottom: 0.5rem;">
+                    <strong>${selectedFeatObj.name}:</strong> ${selectedFeatObj.desc}
+                  </div>
+                ` : ''}
+                ${selectedFeatObj && selectedFeatObj.halfStat ? `
+                  <div style="display: flex; align-items: center; gap: 0.6rem;">
+                    <label for="lvl-half-feat-stat" style="font-size: 0.8rem; font-weight: 600; color: var(--text-gold);">Half-Feat +1 Ability Bonus:</label>
+                    <select id="lvl-half-feat-stat" class="form-control" style="width: 140px;">
+                      <option value="">-- Choose --</option>
+                      ${selectedFeatObj.halfStat.map(s => `<option value="${s}" ${state.halfFeatStat === s ? 'selected' : ''}>+1 ${s.toUpperCase()} (${(char.stats?.[s] || 10)} → ${(char.stats?.[s] || 10) + 1})</option>`).join('')}
+                    </select>
+                  </div>
+                ` : ''}
+              `}
+            ` : `
+              <div style="font-size: 0.82rem; color: var(--text-muted);">
+                Next standard ASI / Feat level for ${classKey}: Level ${classInfo.asiLevels.find(l => l > nextLevel) || 19}.
+              </div>
+            `}
+          </div>
+
+          <!-- 5. New Spells & Spell Slots (Spellcasters & Half-Casters) -->
+          ${isCaster ? `
+            <div style="background: var(--bg-tertiary); border: 1px solid rgba(129, 140, 248, 0.35); border-radius: var(--radius-md); padding: 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem;">
+                <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: #a5b4fc;">
+                  5. New Spells & Spell Slots (Up to Level ${maxSpellLvl})
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                  Slots: ${Object.entries(newSpellSlots).map(([k, v]) => `<strong>L${k}:</strong> ${v}`).join(' • ')}
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.6rem;">
+                ${Array.from({ length: maxSpellLvl + 1 }, (_, i) => i).map(lvl => `
+                  <button type="button" class="btn btn-sm ${state.spellFilterLevel === lvl ? 'btn-primary' : ''}" data-spell-lvl="${lvl}" style="padding: 2px 8px; font-size: 0.75rem;">
+                    ${lvl === 0 ? 'Cantrips' : 'Lvl ' + lvl}
+                  </button>
+                `).join('')}
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.7rem;">
+                ${(DND_LEVEL_UP_DATA.spellsByLevel[state.spellFilterLevel] || []).map(sp => {
+                  const chosen = state.selectedSpells.includes(sp);
+                  const known = (char.spells || []).includes(sp);
+                  return `
+                    <button type="button" class="btn btn-sm lvl-spell-chip ${chosen ? 'btn-primary' : ''}" data-spell="${sp}" style="font-size: 0.75rem; padding: 3px 8px; ${known ? 'opacity: 0.5;' : ''}" ${known ? 'disabled title="Already known"' : ''}>
+                      ${chosen ? '✓ ' : '+ '}${sp}
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="lvl-custom-spell-input" class="form-control" placeholder="Add custom / homebrew spell..." value="${state.customSpell}" style="flex: 1;">
+                <button type="button" class="btn btn-sm" id="btn-add-custom-spell">+ Add Spell</button>
+              </div>
+              ${state.selectedSpells.length > 0 ? `
+                <div style="margin-top: 0.5rem; font-size: 0.78rem; color: #a5b4fc;">
+                  Learning: <strong>${state.selectedSpells.join(', ')}</strong>
+                </div>
+              ` : ''}
+            </div>
+          ` : ''}
+
+          <!-- 6. Optional 5.5e Weapon Mastery -->
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+            <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-gold); margin-bottom: 0.5rem;">
+              ${isCaster ? '6.' : '5.'} Optional 5.5e Weapon Mastery Unlock
+            </div>
+            <select id="lvl-mastery-select" class="form-control">
+              <option value="">-- Keep Current Weapon Masteries --</option>
+              ${DND_LEVEL_UP_DATA.weaponMasteries.map(m => `<option value="${m}" ${state.selectedMastery === m ? 'selected' : ''}>+ ${m}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 0.85rem 1.25rem; border-top: 1px solid var(--border-subtle);">
+          <div style="font-size: 0.82rem; color: var(--text-muted);">
+            Saves immediately to Supabase Cloud &amp; syncs live to party.
+          </div>
+          <div style="display: flex; gap: 0.6rem;">
+            <button type="button" class="btn" id="cancel-level-up-btn">Cancel</button>
+            <button type="button" class="btn btn-primary" id="confirm-level-up-btn" style="font-weight: 700;">
+              ✨ Confirm Level ${nextLevel} (+${hpInfo.total} HP)
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    bindModalEvents();
+  }
+
+  function closeModal() {
+    modal.classList.remove('active');
+  }
+
+  function bindModalEvents() {
+    modal.querySelector('#close-level-up-modal')?.addEventListener('click', closeModal);
+    modal.querySelector('#cancel-level-up-btn')?.addEventListener('click', closeModal);
+
+    // HP method buttons
+    modal.querySelectorAll('button[data-hp-method]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const m = btn.getAttribute('data-hp-method');
+        state.hpMethod = m;
+        if (m === 'average') {
+          state.hpRoll = fixedAvg;
+        } else if (m === 'roll') {
+          state.hpRoll = Math.floor(Math.random() * classInfo.hitDie) + 1;
+          state.hasRolledHp = true;
+          try { soundEngine.playDiceRoll(state.hpRoll === classInfo.hitDie); } catch (_) {}
+        }
+        renderModal();
+      });
+    });
+
+    modal.querySelector('#lvl-manual-hp-input')?.addEventListener('change', (e) => {
+      const val = Math.max(1, Math.min(classInfo.hitDie, parseInt(e.target.value, 10) || 1));
+      state.hpRoll = val;
+      renderModal();
+    });
+
+    // Subclass
+    modal.querySelector('#lvl-subclass-select')?.addEventListener('change', (e) => {
+      state.subclass = e.target.value;
+    });
+    modal.querySelector('#lvl-subclass-custom')?.addEventListener('input', (e) => {
+      state.customSubclass = e.target.value;
+    });
+
+    // Bonus ASI/Feat toggle
+    modal.querySelector('#lvl-toggle-bonus-asi')?.addEventListener('change', (e) => {
+      state.grantAsiOrFeat = e.target.checked;
+      renderModal();
+    });
+
+    // ASI vs Feat mode
+    modal.querySelectorAll('button[data-asi-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.asiMode = btn.getAttribute('data-asi-mode');
+        renderModal();
+      });
+    });
+
+    // ASI +/- buttons
+    modal.querySelectorAll('.lvl-asi-inc').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = btn.getAttribute('data-stat');
+        const spent = Object.values(state.asiAlloc).reduce((a, b) => a + b, 0);
+        if (spent < 2) {
+          state.asiAlloc[s] = (state.asiAlloc[s] || 0) + 1;
+          renderModal();
+        }
+      });
+    });
+    modal.querySelectorAll('.lvl-asi-dec').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = btn.getAttribute('data-stat');
+        if ((state.asiAlloc[s] || 0) > 0) {
+          state.asiAlloc[s] -= 1;
+          renderModal();
+        }
+      });
+    });
+
+    // Feat picker
+    modal.querySelector('#lvl-feat-select')?.addEventListener('change', (e) => {
+      state.selectedFeat = e.target.value;
+      const featObj = DND_LEVEL_UP_DATA.feats.find(f => f.name === state.selectedFeat);
+      state.halfFeatStat = (featObj && featObj.halfStat && featObj.halfStat.length === 1) ? featObj.halfStat[0] : '';
+      renderModal();
+    });
+    modal.querySelector('#lvl-feat-custom')?.addEventListener('input', (e) => {
+      state.customFeat = e.target.value;
+    });
+    modal.querySelector('#lvl-half-feat-stat')?.addEventListener('change', (e) => {
+      state.halfFeatStat = e.target.value;
+      renderModal();
+    });
+
+    // Spell level tabs & chips
+    modal.querySelectorAll('button[data-spell-lvl]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.spellFilterLevel = parseInt(btn.getAttribute('data-spell-lvl'), 10);
+        renderModal();
+      });
+    });
+    modal.querySelectorAll('.lvl-spell-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sp = btn.getAttribute('data-spell');
+        if (state.selectedSpells.includes(sp)) {
+          state.selectedSpells = state.selectedSpells.filter(x => x !== sp);
+        } else {
+          state.selectedSpells.push(sp);
+        }
+        renderModal();
+      });
+    });
+    modal.querySelector('#lvl-custom-spell-input')?.addEventListener('input', (e) => {
+      state.customSpell = e.target.value;
+    });
+    modal.querySelector('#btn-add-custom-spell')?.addEventListener('click', () => {
+      const sp = (state.customSpell || '').trim();
+      if (sp && !state.selectedSpells.includes(sp)) {
+        state.selectedSpells.push(sp);
+        state.customSpell = '';
+        renderModal();
+      }
+    });
+
+    // Mastery
+    modal.querySelector('#lvl-mastery-select')?.addEventListener('change', (e) => {
+      state.selectedMastery = e.target.value;
+    });
+
+    // Confirm Level Up
+    modal.querySelector('#confirm-level-up-btn')?.addEventListener('click', () => {
+      const chosenSubclass = (state.customSubclass || state.subclass || '').trim();
+      const chosenFeat = (state.grantAsiOrFeat && state.asiMode === 'feat')
+        ? (state.customFeat || state.selectedFeat || '').trim()
+        : '';
+
+      const payload = {
+        hpMethod: state.hpMethod,
+        hpRoll: state.hpRoll,
+        subclass: chosenSubclass || null,
+        statIncreases: getPendingStatIncreases(),
+        feat: chosenFeat || null,
+        features: unlockedFeatures,
+        spells: state.selectedSpells,
+        spellSlots: isCaster ? newSpellSlots : null,
+        weaponMasteries: state.selectedMastery ? [state.selectedMastery] : []
+      };
+
+      const res = worldState.levelUpCharacter(char.id, payload);
+      if (!res.success) {
+        alert(res.error || 'Could not complete level up.');
+        return;
+      }
+
+      try { soundEngine.playDiceRoll(true); } catch (_) {}
+      closeModal();
+      if (typeof onComplete === 'function') onComplete(res);
+    });
+  }
+
+  renderModal();
+  modal.classList.add('active');
+}
+
   // COMPONENT: partyView.js
 /**
  * Party Status Monitor & Player Character Creation / Upload System for D&D 5.5e
@@ -5471,6 +6578,9 @@ function renderPartyView(container) {
                 <button class="btn btn-sm btn-primary play-hero-btn" data-id="${char.id}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
                   ${isMyHero ? 'Open My Sheet & Journal' : 'Inspect Sheet & Journal'}
                 </button>
+                <button class="btn btn-sm level-up-party-btn" data-id="${char.id}" style="background: rgba(212, 175, 55, 0.2); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up ${char.name}">
+                  ⬆ Lvl Up
+                </button>
               ` : (owner ? `
                 <div style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.35rem 0.6rem; font-size: 0.8rem; color: var(--text-muted); text-align: center;">
                   Commanded by ${owner.displayName}
@@ -5609,6 +6719,13 @@ function renderPartyView(container) {
         worldState.setActiveHero(id);
         const heroTab = document.querySelector('.nav-tab-btn[data-tab="hero"]');
         if (heroTab) heroTab.click();
+      });
+    });
+
+    gridContainer.querySelectorAll('.level-up-party-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        openLevelUpModal(id, () => renderPartyCards());
       });
     });
 
@@ -6190,6 +7307,7 @@ function renderHeroView(container) {
             ${allowedCharacters.map(c => `<option value="${c.id}" ${c.id === activeHero.id ? 'selected' : ''}>${c.avatar || 'PC'} ${c.name} (Lvl ${c.level || 1})</option>`).join('')}
           </select>
         ` : ''}
+        <button class="btn btn-sm" id="btn-hero-level-up" style="background: rgba(212, 175, 55, 0.22); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up Character (Roll HP, Features, Feats & Spells)">⬆ Level Up</button>
         <button class="btn btn-sm" id="btn-hero-short-rest" title="Take Short Rest">Short Rest</button>
         <button class="btn btn-sm btn-primary" id="btn-hero-long-rest" title="Take Long Rest">Long Rest</button>
         <button class="btn btn-sm" id="btn-hero-view-map" title="View Current Location on World Map">Map</button>
@@ -6336,6 +7454,32 @@ function renderHeroView(container) {
             </div>
           ` : ''}
 
+          <!-- Feats & Class Features -->
+          ${((activeHero.feats && activeHero.feats.length > 0) || (activeHero.features && activeHero.features.length > 0)) ? `
+            <div style="margin-top: 0.85rem;">
+              <div style="font-size: 0.75rem; font-weight: bold; color: var(--text-gold); margin-bottom: 0.25rem;">
+                FEATS &amp; CLASS FEATURES
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                ${(activeHero.feats || []).map(f => `<span style="background: rgba(56, 189, 248, 0.16); border: 1px solid rgba(56, 189, 248, 0.4); color: #7dd3fc; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 600;">★ ${f}</span>`).join('')}
+                ${(activeHero.features || []).map(f => `<span style="background: rgba(212, 175, 55, 0.12); border: 1px solid rgba(212, 175, 55, 0.3); color: var(--text-secondary); padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✦ ${f}</span>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Known Spells & Spell Slots -->
+          ${((activeHero.spells && activeHero.spells.length > 0) || (activeHero.spellSlots && Object.keys(activeHero.spellSlots).length > 0)) ? `
+            <div style="margin-top: 0.85rem;">
+              <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
+                <span>KNOWN SPELLS</span>
+                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${v}`).join(' • ')}</span>` : ''}
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
             ${activeHero.classResources ? `
@@ -6468,6 +7612,7 @@ function renderHeroView(container) {
 
   // Attach Event Handlers
   const heroSelect = container.querySelector('#hero-select-dropdown');
+  const levelUpBtn = container.querySelector('#btn-hero-level-up');
   const shortRestBtn = container.querySelector('#btn-hero-short-rest');
   const longRestBtn = container.querySelector('#btn-hero-long-rest');
   const viewMapBtn = container.querySelector('#btn-hero-view-map');
@@ -6503,6 +7648,13 @@ function renderHeroView(container) {
     heroSelect.addEventListener('change', (e) => {
       worldState.setActiveHero(e.target.value);
       renderHeroView(container);
+    });
+  }
+
+  // Level Up Wizard Trigger
+  if (levelUpBtn) {
+    levelUpBtn.addEventListener('click', () => {
+      openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
 
@@ -10856,10 +12008,12 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.0';
+    window.APP_VERSION = '1.1';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;
+    window.openLevelUpModal = openLevelUpModal;
+    window.DND_LEVEL_UP_DATA = DND_LEVEL_UP_DATA;
     window.supabaseDb = supabaseDb;
     window.worldState = worldState;
   }

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>D&D 5.5e Character Level-Up Tests</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.1"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        // 1. Exports & 5.5e data completeness
+        assert(typeof window.openLevelUpModal === 'function', "openLevelUpModal is exposed on window");
+        assert(typeof window.DND_LEVEL_UP_DATA === 'object', "DND_LEVEL_UP_DATA is exposed on window");
+        assert(Object.keys(DND_LEVEL_UP_DATA.classes).length === 12, "All 12 D&D 5.5e classes configured in level-up table");
+        assert(DND_LEVEL_UP_DATA.feats.length >= 15, "5.5e Feats & Epic Boons library populated (" + DND_LEVEL_UP_DATA.feats.length + " feats)");
+        assert(DND_LEVEL_UP_DATA.getProficiencyBonus(5) === 3 && DND_LEVEL_UP_DATA.getProficiencyBonus(17) === 6, "Proficiency bonus scales accurately (+2 to +6)");
+
+        // Enable DM mode for testing level-ups across heroes
+        worldState.setDmMode(true);
+
+        // 2. Test Wizard Lv 2 -> Lv 3 (Subclass + Rolled HP + New Spells + Spell Slots)
+        const wiz = worldState.createPartyCharacter({
+          name: 'Elara Voss',
+          level: 2,
+          species: 'Elf',
+          classRole: 'Wizard',
+          hitDie: 6,
+          hpMax: 14,
+          stats: { str: 8, dex: 14, con: 14, int: 16, wis: 12, cha: 10 }
+        });
+        const wizRes = worldState.levelUpCharacter(wiz.id, {
+          hpMethod: 'roll',
+          hpRoll: 5, // +2 CON = +7 HP -> 21 HP
+          subclass: 'Evoker',
+          features: ['Wizard Subclass', '2nd-Level Spell Slots'],
+          spells: ['Misty Step', 'Web'],
+          spellSlots: DND_LEVEL_UP_DATA.getSpellSlotsForLevel('full', 3)
+        });
+        assert(wizRes.success === true, "Wizard leveled up from Lv 2 to Lv 3 successfully");
+        assert(wiz.level === 3, "Wizard level incremented to 3");
+        assert(wiz.hpMax === 21 && wiz.hpCurrent === 21, "Wizard HP updated with roll (5) + CON (+2) = 21 (got " + wiz.hpMax + ")");
+        assert(wiz.subclass === 'Evoker' && wiz.classRole.includes('Evoker'), "Wizard subclass saved: " + wiz.classRole);
+        assert(wiz.spells.includes('Misty Step') && wiz.spells.includes('Web'), "New spells saved to character sheet");
+        assert(wiz.spellSlots && wiz.spellSlots[2] === 2, "2nd-level spell slots unlocked (count: 2)");
+
+        // 3. Test Barbarian Lv 3 -> Lv 4 (ASI +2 CON -> Retroactive CON HP + Unarmored Defense AC)
+        const barb = worldState.createPartyCharacter({
+          name: 'Krag Ironhide',
+          level: 3,
+          species: 'Goliath',
+          classRole: 'Barbarian',
+          hitDie: 12,
+          hpMax: 35,
+          ac: 14,
+          stats: { str: 16, dex: 14, con: 14, int: 8, wis: 10, cha: 10 } // DEX +2, CON +2 -> AC 14
+        });
+        const barbRes = worldState.levelUpCharacter(barb.id, {
+          hpMethod: 'average',
+          hpRoll: 7, // +3 new CON = 10, +3 retro CON (3 prev lvls * +1) = +13 HP -> 48 HP
+          statIncreases: { con: 2 },
+          features: ['Ability Score Improvement / Feat'],
+          weaponMasteries: ['Cleave (Greataxe / Halberd)']
+        });
+        assert(barbRes.success === true, "Barbarian leveled up from Lv 3 to Lv 4 with +2 CON ASI");
+        assert(barb.stats.con === 16, "Barbarian CON increased from 14 to 16");
+        assert(barb.hpMax === 48, "Retroactive CON HP bonus applied accurately (35 + 7 + 3 + 3 retro = 48, got " + barb.hpMax + ")");
+        assert(barb.ac === 15, "Barbarian Unarmored Defense AC automatically recalculated to 15 (10 + 2 DEX + 3 CON)");
+        assert(barb.weaponMasteries.includes('Cleave (Greataxe / Halberd)'), "New Weapon Mastery added");
+
+        // 4. Test Tough Feat (+2 HP per level retroactive)
+        const toughHero = worldState.createPartyCharacter({
+          name: 'Bram Shieldwall',
+          level: 3,
+          species: 'Human',
+          classRole: 'Fighter',
+          hitDie: 10,
+          hpMax: 28,
+          stats: { str: 16, dex: 12, con: 14, int: 10, wis: 12, cha: 10 }
+        });
+        worldState.levelUpCharacter(toughHero.id, {
+          hpMethod: 'average',
+          hpRoll: 6, // +2 CON = 8, + Tough (2 * 4 = 8) = +16 HP -> 44 HP
+          feat: 'Tough',
+          features: ['Ability Score Improvement / Feat']
+        });
+        assert(toughHero.feats.includes('Tough'), "Tough feat saved to hero feats list");
+        assert(toughHero.hpMax === 44, "Tough feat applied retroactive +8 HP (28 + 8 + 8 = 44, got " + toughHero.hpMax + ")");
+
+        // 5. Verify Level-Up Dice Log & History
+        assert(Array.isArray(wiz.levelHistory) && wiz.levelHistory.length === 1, "Level-up audit history recorded on character");
+        const lvlLog = worldState.getDiceRollLogs(10).find(r => r.rollType === 'level_up');
+        assert(lvlLog !== undefined, "Level-up & HP roll logged to synchronized Dice Roll Log");
+
+        // 6. Verify Supabase DB Mapper preserves all level-up data in details JSONB
+        const dbRow = supabaseDb.mapCharacterToDb(wiz, 'demo');
+        const restoredWiz = supabaseDb.mapCharacterFromDb(dbRow);
+        assert(restoredWiz.level === 3 && restoredWiz.subclass === 'Evoker', "Supabase DB mapper preserves level and subclass");
+        assert(Array.isArray(restoredWiz.spells) && restoredWiz.spells.includes('Misty Step'), "Supabase DB mapper preserves learned spells in details JSONB");
+        assert(Array.isArray(restoredWiz.levelHistory) && restoredWiz.levelHistory.length === 1, "Supabase DB mapper preserves levelHistory in details JSONB");
+
+        // 7. Test Modal UI Rendering
+        openLevelUpModal(wiz.id);
+        const modal = document.getElementById('character-level-up-modal');
+        assert(modal !== null && modal.classList.contains('active'), "Level-Up Modal opens and renders in DOM");
+        assert(modal.querySelector('#btn-lvl-roll-hp') !== null, "Roll 1dX for HP button rendered in modal");
+        assert(modal.querySelector('#confirm-level-up-btn') !== null, "Confirm Level Up button rendered in modal");
+        assert(modal.querySelectorAll('.lvl-spell-chip').length > 0, "Spell selection chips rendered for Wizard");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("CHARACTER LEVEL-UP TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

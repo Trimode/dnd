@@ -5,6 +5,7 @@
  */
 import { worldState } from '../state/worldState.js';
 import { soundEngine } from '../utils/soundEngine.js';
+import { openLevelUpModal } from './levelUpModal.js';
 
 export function renderHeroView(container) {
   const { data, prefs } = worldState;
@@ -282,6 +283,7 @@ export function renderHeroView(container) {
             ${allowedCharacters.map(c => `<option value="${c.id}" ${c.id === activeHero.id ? 'selected' : ''}>${c.avatar || 'PC'} ${c.name} (Lvl ${c.level || 1})</option>`).join('')}
           </select>
         ` : ''}
+        <button class="btn btn-sm" id="btn-hero-level-up" style="background: rgba(212, 175, 55, 0.22); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up Character (Roll HP, Features, Feats & Spells)">⬆ Level Up</button>
         <button class="btn btn-sm" id="btn-hero-short-rest" title="Take Short Rest">Short Rest</button>
         <button class="btn btn-sm btn-primary" id="btn-hero-long-rest" title="Take Long Rest">Long Rest</button>
         <button class="btn btn-sm" id="btn-hero-view-map" title="View Current Location on World Map">Map</button>
@@ -428,6 +430,32 @@ export function renderHeroView(container) {
             </div>
           ` : ''}
 
+          <!-- Feats & Class Features -->
+          ${((activeHero.feats && activeHero.feats.length > 0) || (activeHero.features && activeHero.features.length > 0)) ? `
+            <div style="margin-top: 0.85rem;">
+              <div style="font-size: 0.75rem; font-weight: bold; color: var(--text-gold); margin-bottom: 0.25rem;">
+                FEATS &amp; CLASS FEATURES
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                ${(activeHero.feats || []).map(f => `<span style="background: rgba(56, 189, 248, 0.16); border: 1px solid rgba(56, 189, 248, 0.4); color: #7dd3fc; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 600;">★ ${f}</span>`).join('')}
+                ${(activeHero.features || []).map(f => `<span style="background: rgba(212, 175, 55, 0.12); border: 1px solid rgba(212, 175, 55, 0.3); color: var(--text-secondary); padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✦ ${f}</span>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Known Spells & Spell Slots -->
+          ${((activeHero.spells && activeHero.spells.length > 0) || (activeHero.spellSlots && Object.keys(activeHero.spellSlots).length > 0)) ? `
+            <div style="margin-top: 0.85rem;">
+              <div style="font-size: 0.75rem; font-weight: bold; color: #a5b4fc; margin-bottom: 0.25rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem;">
+                <span>KNOWN SPELLS</span>
+                ${activeHero.spellSlots ? `<span style="font-size: 0.7rem; color: var(--text-muted);">${Object.entries(activeHero.spellSlots).map(([k, v]) => `L${k}: ${v}`).join(' • ')}</span>` : ''}
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                ${(activeHero.spells || []).map(sp => `<span style="background: rgba(129, 140, 248, 0.15); border: 1px solid rgba(129, 140, 248, 0.35); color: #c7d2fe; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem;">✨ ${sp}</span>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+
           <!-- Class Resources & Conditions -->
           <div style="margin-top: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
             ${activeHero.classResources ? `
@@ -560,6 +588,7 @@ export function renderHeroView(container) {
 
   // Attach Event Handlers
   const heroSelect = container.querySelector('#hero-select-dropdown');
+  const levelUpBtn = container.querySelector('#btn-hero-level-up');
   const shortRestBtn = container.querySelector('#btn-hero-short-rest');
   const longRestBtn = container.querySelector('#btn-hero-long-rest');
   const viewMapBtn = container.querySelector('#btn-hero-view-map');
@@ -595,6 +624,13 @@ export function renderHeroView(container) {
     heroSelect.addEventListener('change', (e) => {
       worldState.setActiveHero(e.target.value);
       renderHeroView(container);
+    });
+  }
+
+  // Level Up Wizard Trigger
+  if (levelUpBtn) {
+    levelUpBtn.addEventListener('click', () => {
+      openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
 

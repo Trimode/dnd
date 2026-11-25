@@ -4,6 +4,7 @@
  */
 import { worldState } from '../state/worldState.js';
 import { soundEngine } from '../audio/soundEngine.js';
+import { openLevelUpModal } from './levelUpModal.js';
 
 export function renderPartyView(container) {
   const { data, prefs } = worldState;
@@ -442,6 +443,9 @@ export function renderPartyView(container) {
                 <button class="btn btn-sm btn-primary play-hero-btn" data-id="${char.id}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
                   ${isMyHero ? 'Open My Sheet & Journal' : 'Inspect Sheet & Journal'}
                 </button>
+                <button class="btn btn-sm level-up-party-btn" data-id="${char.id}" style="background: rgba(212, 175, 55, 0.2); border-color: var(--accent-gold); color: var(--text-gold); font-weight: 700;" title="Level Up ${char.name}">
+                  ⬆ Lvl Up
+                </button>
               ` : (owner ? `
                 <div style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.35rem 0.6rem; font-size: 0.8rem; color: var(--text-muted); text-align: center;">
                   Commanded by ${owner.displayName}
@@ -580,6 +584,13 @@ export function renderPartyView(container) {
         worldState.setActiveHero(id);
         const heroTab = document.querySelector('.nav-tab-btn[data-tab="hero"]');
         if (heroTab) heroTab.click();
+      });
+    });
+
+    gridContainer.querySelectorAll('.level-up-party-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        openLevelUpModal(id, () => renderPartyCards());
       });
     });
 

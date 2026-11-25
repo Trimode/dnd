@@ -11,7 +11,7 @@
   <div id="view-create-hero" style="display: none;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=1.0"></script>
+  <script src="js/bundle.js?v=1.1"></script>
 
   <script>
     (async function() {
@@ -122,8 +122,8 @@
 
         // 7. Verify version is 0.8
         const versionEl = doc.getElementById('app-version-indicator');
-        assert(versionEl && versionEl.textContent.trim() === 'v1.0', "Version indicator updated to 'v1.0'");
-        assert(window.APP_VERSION === '1.0', "window.APP_VERSION is '1.0'");
+        assert(versionEl && versionEl.textContent.trim() === 'v1.1', "Version indicator updated to 'v1.1'");
+        assert(window.APP_VERSION === '1.1', "window.APP_VERSION is '1.1'");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

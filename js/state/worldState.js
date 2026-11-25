@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.0';
+    this.version = '1.1';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -586,6 +586,183 @@ class WorldStateManager {
     this.saveData();
 
     return newChar;
+  }
+
+  levelUpCharacter(charId, levelUpData = {}) {
+    if (!this.canControlCharacter(charId)) {
+      return { success: false, error: 'You do not have permission to level up this character.' };
+    }
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) {
+      return { success: false, error: 'Character not found.' };
+    }
+
+    const oldLevel = parseInt(char.level, 10) || 1;
+    if (oldLevel >= 20) {
+      return { success: false, error: 'Character is already at maximum level (20).' };
+    }
+    const newLevel = Math.min(20, oldLevel + 1);
+
+    if (!char.stats) {
+      char.stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    }
+
+    const getMod = (v) => Math.floor(((parseInt(v, 10) || 10) - 10) / 2);
+    const oldConMod = getMod(char.stats.con);
+    const oldDexMod = getMod(char.stats.dex);
+    const oldWisMod = getMod(char.stats.wis);
+
+    // 1. Apply ASI / Half-Feat Ability Score Increases
+    const statIncreases = levelUpData.statIncreases || {};
+    const maxCap = newLevel >= 19 ? 22 : 20;
+    const appliedAsi = {};
+    ['str', 'dex', 'con', 'int', 'wis', 'cha'].forEach(stat => {
+      const inc = parseInt(statIncreases[stat], 10) || 0;
+      if (inc > 0) {
+        const before = parseInt(char.stats[stat], 10) || 10;
+        const after = Math.min(maxCap, before + inc);
+        char.stats[stat] = after;
+        appliedAsi[stat] = after - before;
+      }
+    });
+
+    const newConMod = getMod(char.stats.con);
+    const newDexMod = getMod(char.stats.dex);
+    const newWisMod = getMod(char.stats.wis);
+
+    // 2. Calculate Total HP Gain (Rolled/Fixed/Manual + CON + Retroactive CON + Tough/Dwarf)
+    const rawRoll = Number.isFinite(Number(levelUpData.hpRoll)) ? Number(levelUpData.hpRoll) : 6;
+    const perLevelHp = Math.max(1, rawRoll + newConMod);
+    const retroConBonus = Math.max(0, (newConMod - oldConMod) * oldLevel);
+
+    const existingFeats = Array.isArray(char.feats) ? char.feats : [];
+    const newFeatName = levelUpData.feat ? String(levelUpData.feat).trim() : '';
+    const alreadyHadTough = existingFeats.some(f => String(f).toLowerCase().includes('tough'));
+    const gainedToughNow = !alreadyHadTough && newFeatName.toLowerCase().includes('tough');
+    const toughBonus = gainedToughNow ? (2 * newLevel) : (alreadyHadTough ? 2 : 0);
+    const dwarfBonus = (char.species || '').toLowerCase().includes('dwarf') ? 1 : 0;
+
+    const totalHpGained = perLevelHp + retroConBonus + toughBonus + dwarfBonus;
+
+    char.level = newLevel;
+    char.hpMax = (parseInt(char.hpMax, 10) || 10) + totalHpGained;
+    char.hpCurrent = (parseInt(char.hpCurrent, 10) || 0) + totalHpGained;
+
+    // 3. Recalculate Derived Combat Stats
+    char.initiativeMod = newDexMod >= 0 ? `+${newDexMod}` : `${newDexMod}`;
+    char.passivePerception = 10 + newWisMod + (newFeatName.toLowerCase().includes('observant') ? 5 : 0);
+    char.passiveInsight = 10 + newWisMod;
+
+    // Update Unarmored Defense AC if relevant stats increased
+    const clsLower = (char.classRole || '').toLowerCase();
+    if (clsLower.includes('barbarian')) {
+      const unarmored = 10 + newDexMod + newConMod;
+      if (unarmored > (char.ac || 10)) char.ac = unarmored;
+    } else if (clsLower.includes('monk')) {
+      const unarmored = 10 + newDexMod + newWisMod;
+      if (unarmored > (char.ac || 10)) char.ac = unarmored;
+    } else if (newDexMod > oldDexMod && (char.ac || 10) < 16) {
+      char.ac = (char.ac || 10) + (newDexMod - oldDexMod);
+    }
+
+    // 4. Subclass
+    if (levelUpData.subclass && String(levelUpData.subclass).trim()) {
+      const sub = String(levelUpData.subclass).trim();
+      char.subclass = sub;
+      const baseClass = (char.classRole || 'Adventurer').split('(')[0].trim();
+      char.classRole = `${baseClass} (${sub})`;
+    }
+
+    // 5. Class Features
+    if (!Array.isArray(char.features)) char.features = [];
+    const newFeatures = Array.isArray(levelUpData.features) ? levelUpData.features : [];
+    newFeatures.forEach(feat => {
+      const label = typeof feat === 'string' ? feat : feat.name;
+      if (label && !char.features.includes(label)) {
+        char.features.push(label);
+      }
+    });
+
+    // 6. Feats
+    if (!Array.isArray(char.feats)) char.feats = [];
+    if (newFeatName && !char.feats.includes(newFeatName)) {
+      char.feats.push(newFeatName);
+    }
+
+    // 7. Spells & Spell Slots
+    if (!Array.isArray(char.spells)) char.spells = [];
+    const newSpells = Array.isArray(levelUpData.spells) ? levelUpData.spells : [];
+    newSpells.forEach(sp => {
+      const clean = String(sp).trim();
+      if (clean && !char.spells.includes(clean)) {
+        char.spells.push(clean);
+      }
+    });
+    if (levelUpData.spellSlots && Object.keys(levelUpData.spellSlots).length > 0) {
+      char.spellSlots = levelUpData.spellSlots;
+    }
+
+    // 8. Weapon Masteries
+    if (!Array.isArray(char.weaponMasteries)) char.weaponMasteries = [];
+    const newMasteries = Array.isArray(levelUpData.weaponMasteries) ? levelUpData.weaponMasteries : [];
+    newMasteries.forEach(m => {
+      const clean = String(m).trim();
+      if (clean && !char.weaponMasteries.includes(clean)) {
+        char.weaponMasteries.push(clean);
+      }
+    });
+
+    // 9. Append Level-Up Audit History
+    if (!Array.isArray(char.levelHistory)) char.levelHistory = [];
+    const historyRecord = {
+      fromLevel: oldLevel,
+      toLevel: newLevel,
+      hpGained: totalHpGained,
+      hpMethod: levelUpData.hpMethod || 'average',
+      hpRoll: rawRoll,
+      subclass: levelUpData.subclass || null,
+      feat: newFeatName || null,
+      asi: Object.keys(appliedAsi).length > 0 ? appliedAsi : null,
+      features: newFeatures.map(f => (typeof f === 'string' ? f : f.name)),
+      spells: newSpells,
+      weaponMasteries: newMasteries,
+      timestamp: Date.now()
+    };
+    char.levelHistory.unshift(historyRecord);
+
+    // 10. Log HP Roll & Level-Up Celebration to Synchronized Dice Log (persisted in Supabase)
+    if (!this.data.diceRollLogs) this.data.diceRollLogs = [];
+    const summaryBits = [`+${totalHpGained} Max HP`];
+    if (levelUpData.subclass) summaryBits.push(`Subclass: ${levelUpData.subclass}`);
+    if (newFeatName) summaryBits.push(`Feat: ${newFeatName}`);
+    if (Object.keys(appliedAsi).length > 0) {
+      summaryBits.push('ASI: ' + Object.entries(appliedAsi).map(([k, v]) => `+${v} ${k.toUpperCase()}`).join(', '));
+    }
+    if (newSpells.length > 0) summaryBits.push(`Spells: ${newSpells.join(', ')}`);
+
+    this.data.diceRollLogs.unshift({
+      id: 'roll_lvl_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '⬆️',
+      rollType: 'level_up',
+      label: `Level Up: Lv ${oldLevel} → Lv ${newLevel}`,
+      formula: `${levelUpData.hpMethod === 'roll' ? 'Rolled' : levelUpData.hpMethod === 'manual' ? 'Manual' : 'Avg'} (${rawRoll}) + CON (${newConMod >= 0 ? '+' + newConMod : newConMod})${retroConBonus ? ' + Retro CON (+' + retroConBonus + ')' : ''}${toughBonus ? ' + Tough (+' + toughBonus + ')' : ''}`,
+      d20Result: null,
+      total: totalHpGained,
+      dc: null,
+      success: true,
+      isCrit: false,
+      isNat1: false,
+      advantageMode: 'normal',
+      note: summaryBits.join(' • '),
+      timestamp: Date.now(),
+      timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    });
+    if (this.data.diceRollLogs.length > 80) this.data.diceRollLogs.pop();
+
+    // Single saveData() persists both party_characters + dice_roll_logs to Supabase & refreshes UI once
+    this.saveData();
+    return { success: true, character: char, historyRecord };
   }
 
   deletePartyCharacter(charId) {

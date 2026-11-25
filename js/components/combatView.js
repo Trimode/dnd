@@ -249,6 +249,9 @@ export function renderCombatView(container) {
                   <option value="Troll">Troll (AC 15, HP 84)</option>
                   <option value="Red Dragon Wyrmling">Red Dragon Wyrmling (AC 17, HP 75)</option>
                 </optgroup>
+                <optgroup id="combat-custom-monsters-optgroup" label="Custom Homebrew Bestiary (Supabase)">
+                  ${(worldState.getCustomMonsters ? worldState.getCustomMonsters() : []).map(m => `<option value="custom_${m.id}">${m.name} (AC ${m.ac}, HP ${m.hp})</option>`).join('')}
+                </optgroup>
               </select>
 
               <select id="combat-spawn-team" class="theme-select" style="width: 100%; font-size: 0.75rem; margin-bottom: 0.4rem;" title="Side for spawned NPCs and monsters (party members always join the party)">
@@ -259,6 +262,7 @@ export function renderCombatView(container) {
               <div style="display: flex; gap: 0.35rem; margin-bottom: 0.4rem;">
                 <button id="combat-drop-unit-btn" class="btn btn-sm btn-primary" style="flex: 1; font-size: 0.75rem;">Drop on Map</button>
                 <button id="combat-paint-btn" class="btn btn-sm" style="flex: 1; font-size: 0.75rem;">Paint: OFF</button>
+                <button id="combat-new-monster-btn" class="btn btn-sm" style="font-size: 0.72rem; border-color: var(--accent-gold); color: var(--text-gold);" title="Create Custom Homebrew Monster (Supabase)">+ Monster</button>
               </div>
             </div>
 
@@ -2180,10 +2184,50 @@ function initCombatEngine(container) {
       }));
       notifyToast(`${champName} spawned on map!`);
       renderInitiativeList();
+    } else if (val.startsWith('custom_')) {
+      const mid = val.replace('custom_', '');
+      const mData = (worldState.getCustomMonsters ? worldState.getCustomMonsters() : []).find(m => m.id === mid);
+      if (mData) {
+        cState.entities.push(buildMonsterEntity(mData.name, cx, cy, teamChoice, {
+          ac: mData.ac,
+          hp: mData.hp,
+          maxHp: mData.hp,
+          speed: mData.speed || 6,
+          attackMod: mData.attackMod || 5,
+          dmgFormula: mData.dmgFormula || '1d8+3',
+          dmgType: mData.dmgType || 'slashing',
+          abilities: mData.abilities || ['ember_hex'],
+          portraitUrl: mData.portraitUrl || null
+        }));
+        persistCombatToCloud();
+        notifyToast(`Custom monster ${mData.name} spawned!`);
+        renderInitiativeList();
+        renderEncounterPresetsUi();
+      }
     } else {
       cState.entities.push(buildMonsterEntity(val, cx, cy, teamChoice));
+      persistCombatToCloud();
       notifyToast(`${val} spawned on map (${teamChoice})!`);
       renderInitiativeList();
+      renderEncounterPresetsUi();
+    }
+  });
+
+  // Create Custom Homebrew Monster Button
+  container.querySelector('#combat-new-monster-btn')?.addEventListener('click', async () => {
+    const name = prompt('Custom Monster Name:', 'Obsidian Golem');
+    if (!name) return;
+    const ac = parseInt(prompt('Armor Class (AC):', '16') || '16', 10);
+    const hp = parseInt(prompt('Max Hit Points (HP):', '65') || '65', 10);
+    const dmgFormula = prompt('Attack Damage Dice (e.g. 2d8+4):', '2d8+4') || '2d8+4';
+    const crXp = parseInt(prompt('CR Experience Value (XP, e.g. 700):', '700') || '700', 10);
+    const res = await worldState.createCustomMonster({ name, ac, hp, dmgFormula, crXp });
+    if (res && res.success) {
+      const grp = container.querySelector('#combat-custom-monsters-optgroup');
+      if (grp) {
+        grp.innerHTML = worldState.getCustomMonsters().map(m => `<option value="custom_${m.id}">${m.name} (AC ${m.ac}, HP ${m.hp})</option>`).join('');
+      }
+      notifyToast(`Saved custom monster "${name}" to Supabase!`);
     }
   });
 

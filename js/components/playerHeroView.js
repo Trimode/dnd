@@ -304,6 +304,24 @@ export function renderHeroView(container) {
     <!-- Live Dice Check Result Banner -->
     <div id="hero-dice-result-banner" style="display: none; margin-bottom: 1rem;" class="bastion-turn-log"></div>
 
+    <!-- Interactive 5.5e Death Saving Throws Banner (Active when at 0 HP) -->
+    ${(activeHero.hpCurrent || 0) <= 0 ? `
+      <div id="hero-death-saves-banner" style="margin-bottom: 1rem; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.55); border-radius: var(--radius-md); padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <strong style="color: #fca5a5; font-size: 0.95rem;">💀 ${activeHero.deathSaves?.stabilized ? 'STABILIZED AT 0 HP' : 'DEATH SAVING THROWS (0 HP — DYING)'}</strong>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">
+            Successes: <strong style="color: #86efac;">${'●'.repeat(activeHero.deathSaves?.successes || 0)}${'○'.repeat(3 - (activeHero.deathSaves?.successes || 0))}</strong>
+            &nbsp;&nbsp;|&nbsp;&nbsp;
+            Failures: <strong style="color: #f87171;">${'●'.repeat(activeHero.deathSaves?.failures || 0)}${'○'.repeat(3 - (activeHero.deathSaves?.failures || 0))}</strong>
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button type="button" class="btn btn-sm btn-primary" id="btn-hero-death-save" style="background: linear-gradient(135deg, #b91c1c, #ef4444); border-color: #f87171;">🎲 Roll Death Save</button>
+          <button type="button" class="btn btn-sm" id="btn-hero-stabilize" style="border-color: #86efac; color: #86efac;">🩹 Stabilize</button>
+        </div>
+      </div>
+    ` : ''}
+
     <!-- Main Two-Column Layout -->
     <div class="hero-view-grid">
       
@@ -676,6 +694,19 @@ export function renderHeroView(container) {
       openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
+
+  // Death Saving Throws & Stabilize Handlers
+  container.querySelector('#btn-hero-death-save')?.addEventListener('click', () => {
+    const res = worldState.rollDeathSave(activeHero.id);
+    if (res && res.success) {
+      try { soundEngine.playDiceRoll(res.d20 === 20); } catch (_) {}
+      renderHeroView(container);
+    }
+  });
+  container.querySelector('#btn-hero-stabilize')?.addEventListener('click', () => {
+    worldState.stabilizeCharacter(activeHero.id);
+    renderHeroView(container);
+  });
 
   // Rest Controls
   if (shortRestBtn) {

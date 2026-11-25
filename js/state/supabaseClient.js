@@ -259,6 +259,120 @@ class SupabaseCampaignService {
     return { success: true };
   }
 
+  async fetchCustomMonsters(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('custom_monsters')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      ac: r.ac,
+      hp: r.hp,
+      speed: r.speed,
+      attackMod: r.attack_mod,
+      dmgFormula: r.dmg_formula,
+      dmgType: r.dmg_type,
+      crXp: r.cr_xp,
+      abilities: Array.isArray(r.abilities) ? r.abilities : [],
+      stats: r.stats || {},
+      portraitUrl: r.portrait_url || null
+    }));
+  }
+
+  async saveCustomMonster(campaignId, m) {
+    if (!this.isAvailable() || !m) return { success: false };
+    const { error } = await this.client.from('custom_monsters').upsert({
+      id: m.id,
+      campaign_id: campaignId || 'demo',
+      name: m.name,
+      ac: Number(m.ac) || 14,
+      hp: Number(m.hp) || 30,
+      speed: Number(m.speed) || 6,
+      attack_mod: Number(m.attackMod) || 5,
+      dmg_formula: m.dmgFormula || '1d8+3',
+      dmg_type: m.dmgType || 'slashing',
+      cr_xp: Number(m.crXp) || 450,
+      abilities: Array.isArray(m.abilities) ? m.abilities : [],
+      stats: m.stats || {},
+      portrait_url: m.portraitUrl || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async deleteCustomMonster(monsterId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('custom_monsters').delete().eq('id', monsterId);
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchLootChests(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('loot_chests')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      gold: r.gold || 0,
+      items: Array.isArray(r.items) ? r.items : [],
+      status: r.status || 'open',
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveLootChest(campaignId, chest) {
+    if (!this.isAvailable() || !chest) return { success: false };
+    const { error } = await this.client.from('loot_chests').upsert({
+      id: chest.id,
+      campaign_id: campaignId || 'demo',
+      title: chest.title,
+      gold: Number(chest.gold) || 0,
+      items: Array.isArray(chest.items) ? chest.items : [],
+      status: chest.status || 'open',
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchSessionRecaps(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('session_recaps')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      sessionNumber: r.session_number || 1,
+      title: r.title,
+      summary: r.summary || '',
+      highlights: Array.isArray(r.highlights) ? r.highlights : [],
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveSessionRecap(campaignId, recap) {
+    if (!this.isAvailable() || !recap) return { success: false };
+    const { error } = await this.client.from('session_recaps').upsert({
+      id: recap.id,
+      campaign_id: campaignId || 'demo',
+      session_number: Number(recap.sessionNumber) || 1,
+      title: recap.title,
+      summary: recap.summary || '',
+      highlights: Array.isArray(recap.highlights) ? recap.highlights : []
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {

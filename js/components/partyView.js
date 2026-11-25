@@ -35,7 +35,7 @@ export function renderPartyView(container) {
     </div>
 
     <!-- Shared Bag of Holding / Party Stash Accordion -->
-    <details style="margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
+    <details style="margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
       <summary style="cursor: pointer; font-weight: bold; color: var(--text-gold); font-size: 0.9rem;">
         Shared Bag of Holding & Communal Equipment (Click to expand)
       </summary>
@@ -43,6 +43,25 @@ export function renderPartyView(container) {
         ${settings.sharedBag || 'Empty bag of holding.'}
       </div>
     </details>
+
+    <!-- DM Loot Chest & Session Recap Bar (Supabase Synced) -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+      <div style="background: var(--bg-card); border: 1px solid rgba(212,175,55,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <strong style="color: var(--text-gold); font-size: 0.9rem;">💰 Party Loot Chests (Supabase)</strong>
+          ${prefs.dmMode ? `<button class="btn btn-sm btn-primary" id="party-drop-loot-btn" style="font-size: 0.72rem; padding: 2px 8px;">+ Drop Treasure</button>` : ''}
+        </div>
+        <div id="party-loot-chests-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem;"></div>
+      </div>
+
+      <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <strong style="color: #7dd3fc; font-size: 0.9rem;">📜 Session Recaps &amp; Auto-Chronicle</strong>
+          <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+        </div>
+        <div id="party-recaps-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem; max-height: 180px; overflow-y: auto;"></div>
+      </div>
+    </div>
 
     <!-- Character Cards Grid -->
     <div class="party-grid" id="party-characters-grid"></div>
@@ -630,6 +649,85 @@ export function renderPartyView(container) {
   }
 
   renderPartyCards();
+
+  // Render Loot Chests & Session Recaps
+  function renderLootAndRecaps() {
+    const lootList = container.querySelector('#party-loot-chests-list');
+    const recapList = container.querySelector('#party-recaps-list');
+    const activeHero = worldState.getActiveHero();
+
+    if (lootList) {
+      const chests = worldState.getLootChests();
+      if (chests.length === 0) {
+        lootList.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">No active treasure chests. DM can drop gold &amp; items here.</div>`;
+      } else {
+        lootList.innerHTML = chests.slice(0, 3).map(ch => `
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+              <strong style="color: var(--text-gold);">${ch.title}</strong>
+              ${ch.gold > 0 ? `<button class="btn-tiny split-gold-btn" data-id="${ch.id}" style="color:#fde047;">Split ${ch.gold} GP</button>` : `<span style="font-size:0.7rem;color:#86efac;">Gold Split</span>`}
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+              ${(ch.items || []).map((it, idx) => it.claimedBy
+                ? `<span style="font-size:0.7rem; color:var(--text-muted); text-decoration:line-through;">${it.name} (${it.claimedBy})</span>`
+                : `<button class="btn-tiny claim-loot-item-btn" data-chest="${ch.id}" data-idx="${idx}" title="Claim into ${activeHero ? activeHero.name : 'Active Hero'}'s inventory">Claim ${it.name}</button>`
+              ).join('')}
+            </div>
+          </div>
+        `).join('');
+
+        lootList.querySelectorAll('.split-gold-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            await worldState.splitLootGold(btn.getAttribute('data-id'));
+            renderLootAndRecaps();
+          });
+        });
+        lootList.querySelectorAll('.claim-loot-item-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!activeHero) return;
+            await worldState.claimLootItem(btn.getAttribute('data-chest'), parseInt(btn.getAttribute('data-idx'), 10), activeHero.id);
+            renderLootAndRecaps();
+          });
+        });
+      }
+    }
+
+    if (recapList) {
+      const recaps = worldState.getSessionRecaps();
+      if (recaps.length === 0) {
+        recapList.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">Click "Generate Recap" after a session to auto-compile combat highlights, level-ups &amp; journals into Supabase.</div>`;
+      } else {
+        recapList.innerHTML = recaps.slice(0, 3).map(rc => `
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.5rem;">
+            <strong style="color: #7dd3fc;">${rc.title}</strong>
+            <div style="font-size: 0.74rem; color: var(--text-secondary); margin: 0.2rem 0;">${rc.summary}</div>
+            <ul style="margin: 0; padding-left: 1.1rem; font-size: 0.72rem; color: var(--text-muted);">
+              ${(rc.highlights || []).slice(0, 3).map(h => `<li>${h}</li>`).join('')}
+            </ul>
+          </div>
+        `).join('');
+      }
+    }
+  }
+  renderLootAndRecaps();
+
+  container.querySelector('#party-drop-loot-btn')?.addEventListener('click', async () => {
+    const title = prompt('Treasure Chest Name:', 'Goblin Vault Hoard');
+    if (!title) return;
+    const gold = parseInt(prompt('Gold Pieces (GP) in chest:', '150') || '150', 10);
+    const catalog = (typeof INVENTORY_CATALOG !== 'undefined') ? INVENTORY_CATALOG : [];
+    const sampleItems = [
+      catalog.find(i => i.name === 'Potion of Healing') || { name: 'Potion of Healing', category: 'potion', healDice: '2d4+2', quantity: 1 },
+      catalog.find(i => i.name === 'Cloak of Protection') || { name: 'Cloak of Protection', category: 'magic', acBonus: 1, requiresAttunement: true }
+    ];
+    await worldState.createLootChest({ title, gold, items: sampleItems });
+    renderLootAndRecaps();
+  });
+
+  container.querySelector('#party-gen-recap-btn')?.addEventListener('click', async () => {
+    await worldState.generateSessionRecap();
+    renderLootAndRecaps();
+  });
 
   // Party Gold Controls
   if (goldAddBtn) {

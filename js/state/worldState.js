@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.5';
+    this.version = '1.6';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -276,15 +276,19 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
-        supabaseDb.fetchEncounterPresets(targetId)
+        supabaseDb.fetchEncounterPresets(targetId),
+        supabaseDb.fetchCustomMonsters(targetId),
+        supabaseDb.fetchLootChests(targetId),
+        supabaseDb.fetchSessionRecaps(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
-        if (Array.isArray(remotePresets)) {
-          this.data.encounterPresets = remotePresets;
-        }
+        if (Array.isArray(remotePresets)) this.data.encounterPresets = remotePresets;
+        if (Array.isArray(remoteMonsters)) this.data.customMonsters = remoteMonsters;
+        if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
+        if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -648,6 +652,223 @@ class WorldStateManager {
     (this.presenceListeners || []).forEach(l => {
       try { l(this.onlinePlayers); } catch (_) {}
     });
+  }
+
+  // ==========================================
+  // DEATH SAVING THROWS & STABILIZATION (5.5e)
+  // ==========================================
+  rollDeathSave(charId, forcedRoll = null) {
+    if (!this.canControlCharacter(charId)) return { success: false, error: 'No permission' };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+
+    if (!char.deathSaves) char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+    const d20 = forcedRoll !== null ? Number(forcedRoll) : (Math.floor(Math.random() * 20) + 1);
+    let outcome = '';
+
+    if (d20 === 20) {
+      char.hpCurrent = 1;
+      char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+      outcome = 'NAT 20! Regained 1 HP and stood back up!';
+    } else if (d20 === 1) {
+      char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 2);
+      outcome = char.deathSaves.failures >= 3 ? 'NAT 1! 2 failures — Hero has fallen.' : 'NAT 1! Suffered 2 Death Save failures.';
+    } else if (d20 >= 10) {
+      char.deathSaves.successes = Math.min(3, (char.deathSaves.successes || 0) + 1);
+      if (char.deathSaves.successes >= 3) {
+        char.deathSaves.stabilized = true;
+        outcome = 'Success (3/3)! Hero is now STABILIZED.';
+      } else {
+        outcome = `Success (${char.deathSaves.successes}/3)`;
+      }
+    } else {
+      char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 1);
+      outcome = char.deathSaves.failures >= 3 ? 'Failure (3/3) — Hero has fallen.' : `Failure (${char.deathSaves.failures}/3)`;
+    }
+
+    this.logDiceRoll({
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '💀',
+      rollType: 'death_save',
+      label: 'Death Saving Throw',
+      formula: `1d20 (${d20})`,
+      d20Result: d20,
+      total: d20,
+      dc: 10,
+      success: d20 >= 10,
+      note: outcome
+    });
+
+    return { success: true, d20, outcome, deathSaves: char.deathSaves, hpCurrent: char.hpCurrent };
+  }
+
+  stabilizeCharacter(charId) {
+    if (!this.canControlCharacter(charId)) return false;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    char.deathSaves = { successes: 3, failures: 0, stabilized: true };
+    this.saveData();
+    return true;
+  }
+
+  resetDeathSaves(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return;
+    char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+    this.saveData();
+  }
+
+  // ==========================================
+  // DM LOOT CHESTS & PARTY ITEM DISTRIBUTION
+  // ==========================================
+  getLootChests() {
+    if (!Array.isArray(this.data.lootChests)) this.data.lootChests = [];
+    return this.data.lootChests;
+  }
+
+  async createLootChest({ title = 'Treasure Hoard', gold = 100, items = [] }) {
+    if (!Array.isArray(this.data.lootChests)) this.data.lootChests = [];
+    const chest = {
+      id: 'loot_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: title.trim() || 'Treasure Hoard',
+      gold: Math.max(0, parseInt(gold, 10) || 0),
+      items: items.map(it => ({ ...it, claimedBy: null })),
+      status: 'open',
+      createdAt: Date.now()
+    };
+    this.data.lootChests.unshift(chest);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.saveData(true);
+    return { success: true, chest };
+  }
+
+  async claimLootItem(chestId, itemIndex, charId) {
+    const chest = this.getLootChests().find(c => c.id === chestId);
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!chest || !char || !chest.items[itemIndex] || chest.items[itemIndex].claimedBy) {
+      return { success: false, error: 'Item already claimed or unavailable.' };
+    }
+    const lootItem = chest.items[itemIndex];
+    lootItem.claimedBy = char.name;
+    this.addInventoryItem(char.id, lootItem);
+    if (chest.gold <= 0 && chest.items.every(i => i.claimedBy)) {
+      chest.status = 'claimed';
+    }
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.notify();
+    return { success: true, item: lootItem, hero: char.name };
+  }
+
+  async splitLootGold(chestId) {
+    const chest = this.getLootChests().find(c => c.id === chestId);
+    const party = this.data.partyCharacters || [];
+    if (!chest || chest.gold <= 0 || party.length === 0) return { success: false };
+    const share = Math.floor(chest.gold / party.length);
+    const remainder = chest.gold % party.length;
+    party.forEach((p, idx) => {
+      if (!p.currency) p.currency = { gp: 50, sp: 0, cp: 0 };
+      p.currency.gp = (p.currency.gp || 0) + share + (idx === 0 ? remainder : 0);
+    });
+    const distributed = chest.gold;
+    chest.gold = 0;
+    if (chest.items.every(i => i.claimedBy)) chest.status = 'claimed';
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.saveData();
+    return { success: true, share, distributed, partyCount: party.length };
+  }
+
+  // ==========================================
+  // CUSTOM HOMEBREW MONSTER CREATOR
+  // ==========================================
+  getCustomMonsters() {
+    if (!Array.isArray(this.data.customMonsters)) this.data.customMonsters = [];
+    return this.data.customMonsters;
+  }
+
+  async createCustomMonster(monsterData) {
+    if (!Array.isArray(this.data.customMonsters)) this.data.customMonsters = [];
+    const monster = {
+      id: 'mon_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name: (monsterData.name || 'Custom Beast').trim(),
+      ac: parseInt(monsterData.ac, 10) || 14,
+      hp: parseInt(monsterData.hp, 10) || 35,
+      speed: parseInt(monsterData.speed, 10) || 6,
+      attackMod: parseInt(monsterData.attackMod, 10) || 5,
+      dmgFormula: (monsterData.dmgFormula || '1d8+3').trim(),
+      dmgType: (monsterData.dmgType || 'slashing').trim(),
+      crXp: parseInt(monsterData.crXp, 10) || 450,
+      abilities: Array.isArray(monsterData.abilities) ? monsterData.abilities : ['ember_hex'],
+      stats: monsterData.stats || { str: 14, dex: 12, con: 14, int: 8, wis: 10, cha: 8 },
+      portraitUrl: monsterData.portraitUrl || null
+    };
+    this.data.customMonsters.unshift(monster);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCustomMonster(this.activeGameId || 'demo', monster);
+    }
+    this.saveData(true);
+    return { success: true, monster };
+  }
+
+  async deleteCustomMonster(monsterId) {
+    this.data.customMonsters = this.getCustomMonsters().filter(m => m.id !== monsterId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteCustomMonster(monsterId);
+    }
+    this.saveData(true);
+  }
+
+  // ==========================================
+  // SESSION RECAP & AUTO-CHRONICLE GENERATOR
+  // ==========================================
+  getSessionRecaps() {
+    if (!Array.isArray(this.data.sessionRecaps)) this.data.sessionRecaps = [];
+    return this.data.sessionRecaps;
+  }
+
+  async generateSessionRecap(customTitle = '') {
+    const recaps = this.getSessionRecaps();
+    const sessionNumber = recaps.length + 1;
+    const rolls = (this.data.diceRollLogs || []).slice(0, 15);
+    const crits = rolls.filter(r => r.isCrit).map(r => `💥 ${r.rollerName} rolled a Natural 20 on ${r.label}!`);
+    const levelUps = rolls.filter(r => r.rollType === 'level_up').map(r => `⬆️ ${r.rollerName}: ${r.label} (${r.note})`);
+    const deathSaves = rolls.filter(r => r.rollType === 'death_save').map(r => `💀 ${r.rollerName}: ${r.note}`);
+    const recentJournals = (this.data.journalEntries || []).slice(0, 3).map(j => `📖 ${j.day} — ${j.title} (${j.location})`);
+    const recentLoot = this.getLootChests().slice(0, 2).map(c => `💰 Discovered ${c.title} (${c.items.length} items)`);
+
+    const highlights = [...levelUps, ...crits, ...deathSaves, ...recentLoot, ...recentJournals].slice(0, 10);
+    const partyNames = (this.data.partyCharacters || []).map(c => `${c.name} (Lv ${c.level || 1})`).join(', ');
+    const summary = `Session #${sessionNumber} Chronicle for ${partyNames || 'the Party'}. Recorded ${rolls.length} rolls, ${levelUps.length} level-up(s), ${crits.length} critical hit(s), and ${recentJournals.length} journal entry highlight(s).`;
+
+    const recap = {
+      id: 'recap_' + Date.now(),
+      sessionNumber,
+      title: (customTitle || `Session ${sessionNumber}: Chronicle of Aetheria`).trim(),
+      summary,
+      highlights: highlights.length > 0 ? highlights : ['The party explored the Bleeding Realms and prepared for their next encounter.'],
+      createdAt: Date.now()
+    };
+
+    recaps.unshift(recap);
+    if (!Array.isArray(this.data.timeline)) this.data.timeline = [];
+    this.data.timeline.unshift({
+      id: 'tl_' + recap.id,
+      era: `Session ${sessionNumber}`,
+      year: new Date().toLocaleDateString(),
+      title: recap.title,
+      description: recap.summary + (highlights.length ? ' Highlights: ' + highlights.slice(0, 3).join(' | ') : '')
+    });
+
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveSessionRecap(this.activeGameId || 'demo', recap);
+    }
+    this.saveData();
+    return { success: true, recap };
   }
 
   notify() {

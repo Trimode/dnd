@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v1.6 Tests: Death Saves, Loot Chests, Custom Monsters & Session Recaps</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.6"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Death Saving Throws & Stabilization
+        const hero = worldState.createPartyCharacter({
+          name: 'Dorian Ironclad',
+          level: 4,
+          species: 'Dwarf',
+          classRole: 'Paladin',
+          hitDie: 10,
+          hpMax: 38,
+          stats: { str: 16, dex: 10, con: 16, int: 10, wis: 12, cha: 14 }
+        });
+        hero.hpCurrent = 0;
+
+        const rFail = worldState.rollDeathSave(hero.id, 4);
+        assert(rFail.success && rFail.deathSaves.failures === 1, "Death Save roll 4 adds 1 failure (1/3)");
+
+        const rNat1 = worldState.rollDeathSave(hero.id, 1);
+        assert(rNat1.deathSaves.failures === 3, "Death Save Nat 1 adds 2 failures (3/3)");
+
+        worldState.resetDeathSaves(hero.id);
+        const rNat20 = worldState.rollDeathSave(hero.id, 20);
+        assert(rNat20.hpCurrent === 1 && rNat20.deathSaves.successes === 0, "Death Save Nat 20 revives hero to 1 HP and resets saves");
+
+        hero.hpCurrent = 0;
+        worldState.stabilizeCharacter(hero.id);
+        assert(hero.deathSaves.stabilized === true && hero.deathSaves.successes === 3, "stabilizeCharacter marks downed hero as Stabilized");
+
+        // 2. DM Loot Chest & Party Distribution
+        const chestRes = await worldState.createLootChest({
+          title: 'Dragon Hoard',
+          gold: 200,
+          items: [
+            { name: 'Shield +1', category: 'shield', acBonus: 3, notes: '+3 AC' },
+            { name: 'Potion of Greater Healing', category: 'potion', healDice: '4d4+4', quantity: 1 }
+          ]
+        });
+        assert(chestRes.success && chestRes.chest.gold === 200, "DM Loot Chest 'Dragon Hoard' created with 200 GP");
+
+        const claimRes = await worldState.claimLootItem(chestRes.chest.id, 0, hero.id);
+        assert(claimRes.success && hero.inventoryItems.some(i => i.name === 'Shield +1'), "Claiming 'Shield +1' moves item directly into hero inventory");
+
+        const splitRes = await worldState.splitLootGold(chestRes.chest.id);
+        assert(splitRes.success && chestRes.chest.gold === 0 && splitRes.distributed === 200, "Splitting gold distributes 200 GP evenly across party");
+
+        // 3. Custom Homebrew Monster Creator
+        const monRes = await worldState.createCustomMonster({
+          name: 'Cinder Colossus',
+          ac: 18,
+          hp: 120,
+          speed: 5,
+          attackMod: 9,
+          dmgFormula: '3d8+5',
+          dmgType: 'fire',
+          crXp: 2300
+        });
+        assert(monRes.success && worldState.getCustomMonsters().some(m => m.name === 'Cinder Colossus'), "Custom Homebrew Monster 'Cinder Colossus' saved");
+        assert(typeof supabaseDb.saveCustomMonster === 'function', "supabaseDb.saveCustomMonster persists to public.custom_monsters");
+
+        // 4. Session Recap & Auto-Chronicle
+        const recapRes = await worldState.generateSessionRecap('The Siege of Crucible Gate');
+        assert(recapRes.success && recapRes.recap.title === 'The Siege of Crucible Gate', "Session Recap generated: " + recapRes.recap.title);
+        assert(Array.isArray(recapRes.recap.highlights) && recapRes.recap.highlights.length > 0, "Session Recap auto-compiled highlights (" + recapRes.recap.highlights.length + ")");
+        assert((worldState.data.timeline || []).some(t => t.title === 'The Siege of Crucible Gate'), "Session Recap appended automatically to Campaign Timeline");
+        assert(typeof supabaseDb.saveSessionRecap === 'function', "supabaseDb.saveSessionRecap persists to public.session_recaps");
+
+        // 5. Verify v1.6 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.6', "Version indicator updated to v1.6");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V1.6 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

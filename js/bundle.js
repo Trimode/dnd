@@ -1657,6 +1657,120 @@ class SupabaseCampaignService {
     return { success: true };
   }
 
+  async fetchCustomMonsters(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('custom_monsters')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      ac: r.ac,
+      hp: r.hp,
+      speed: r.speed,
+      attackMod: r.attack_mod,
+      dmgFormula: r.dmg_formula,
+      dmgType: r.dmg_type,
+      crXp: r.cr_xp,
+      abilities: Array.isArray(r.abilities) ? r.abilities : [],
+      stats: r.stats || {},
+      portraitUrl: r.portrait_url || null
+    }));
+  }
+
+  async saveCustomMonster(campaignId, m) {
+    if (!this.isAvailable() || !m) return { success: false };
+    const { error } = await this.client.from('custom_monsters').upsert({
+      id: m.id,
+      campaign_id: campaignId || 'demo',
+      name: m.name,
+      ac: Number(m.ac) || 14,
+      hp: Number(m.hp) || 30,
+      speed: Number(m.speed) || 6,
+      attack_mod: Number(m.attackMod) || 5,
+      dmg_formula: m.dmgFormula || '1d8+3',
+      dmg_type: m.dmgType || 'slashing',
+      cr_xp: Number(m.crXp) || 450,
+      abilities: Array.isArray(m.abilities) ? m.abilities : [],
+      stats: m.stats || {},
+      portrait_url: m.portraitUrl || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async deleteCustomMonster(monsterId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('custom_monsters').delete().eq('id', monsterId);
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchLootChests(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('loot_chests')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      title: r.title,
+      gold: r.gold || 0,
+      items: Array.isArray(r.items) ? r.items : [],
+      status: r.status || 'open',
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveLootChest(campaignId, chest) {
+    if (!this.isAvailable() || !chest) return { success: false };
+    const { error } = await this.client.from('loot_chests').upsert({
+      id: chest.id,
+      campaign_id: campaignId || 'demo',
+      title: chest.title,
+      gold: Number(chest.gold) || 0,
+      items: Array.isArray(chest.items) ? chest.items : [],
+      status: chest.status || 'open',
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async fetchSessionRecaps(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('session_recaps')
+      .select('*')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) return null;
+    return (data || []).map(r => ({
+      id: r.id,
+      sessionNumber: r.session_number || 1,
+      title: r.title,
+      summary: r.summary || '',
+      highlights: Array.isArray(r.highlights) ? r.highlights : [],
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveSessionRecap(campaignId, recap) {
+    if (!this.isAvailable() || !recap) return { success: false };
+    const { error } = await this.client.from('session_recaps').upsert({
+      id: recap.id,
+      campaign_id: campaignId || 'demo',
+      session_number: Number(recap.sessionNumber) || 1,
+      title: recap.title,
+      summary: recap.summary || '',
+      highlights: Array.isArray(recap.highlights) ? recap.highlights : []
+    }, { onConflict: 'id' });
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   subscribePresence(campaignId, userMeta, onPresenceSync) {
     if (!this.isAvailable()) return null;
     if (this.presenceChannel) {
@@ -2281,7 +2395,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.5';
+    this.version = '1.6';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2548,15 +2662,19 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const [cloudData, remotePresets] = await Promise.all([
+      const [cloudData, remotePresets, remoteMonsters, remoteChests, remoteRecaps] = await Promise.all([
         supabaseDb.loadCampaignData(targetId, seedData),
-        supabaseDb.fetchEncounterPresets(targetId)
+        supabaseDb.fetchEncounterPresets(targetId),
+        supabaseDb.fetchCustomMonsters(targetId),
+        supabaseDb.fetchLootChests(targetId),
+        supabaseDb.fetchSessionRecaps(targetId)
       ]);
       if (cloudData) {
         this.data = cloudData;
-        if (Array.isArray(remotePresets)) {
-          this.data.encounterPresets = remotePresets;
-        }
+        if (Array.isArray(remotePresets)) this.data.encounterPresets = remotePresets;
+        if (Array.isArray(remoteMonsters)) this.data.customMonsters = remoteMonsters;
+        if (Array.isArray(remoteChests)) this.data.lootChests = remoteChests;
+        if (Array.isArray(remoteRecaps)) this.data.sessionRecaps = remoteRecaps;
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
@@ -2920,6 +3038,223 @@ class WorldStateManager {
     (this.presenceListeners || []).forEach(l => {
       try { l(this.onlinePlayers); } catch (_) {}
     });
+  }
+
+  // ==========================================
+  // DEATH SAVING THROWS & STABILIZATION (5.5e)
+  // ==========================================
+  rollDeathSave(charId, forcedRoll = null) {
+    if (!this.canControlCharacter(charId)) return { success: false, error: 'No permission' };
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return { success: false, error: 'Character not found' };
+
+    if (!char.deathSaves) char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+    const d20 = forcedRoll !== null ? Number(forcedRoll) : (Math.floor(Math.random() * 20) + 1);
+    let outcome = '';
+
+    if (d20 === 20) {
+      char.hpCurrent = 1;
+      char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+      outcome = 'NAT 20! Regained 1 HP and stood back up!';
+    } else if (d20 === 1) {
+      char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 2);
+      outcome = char.deathSaves.failures >= 3 ? 'NAT 1! 2 failures — Hero has fallen.' : 'NAT 1! Suffered 2 Death Save failures.';
+    } else if (d20 >= 10) {
+      char.deathSaves.successes = Math.min(3, (char.deathSaves.successes || 0) + 1);
+      if (char.deathSaves.successes >= 3) {
+        char.deathSaves.stabilized = true;
+        outcome = 'Success (3/3)! Hero is now STABILIZED.';
+      } else {
+        outcome = `Success (${char.deathSaves.successes}/3)`;
+      }
+    } else {
+      char.deathSaves.failures = Math.min(3, (char.deathSaves.failures || 0) + 1);
+      outcome = char.deathSaves.failures >= 3 ? 'Failure (3/3) — Hero has fallen.' : `Failure (${char.deathSaves.failures}/3)`;
+    }
+
+    this.logDiceRoll({
+      rollerName: `${char.name} (${char.playerName || 'Hero'})`,
+      rollerAvatar: char.avatar || '💀',
+      rollType: 'death_save',
+      label: 'Death Saving Throw',
+      formula: `1d20 (${d20})`,
+      d20Result: d20,
+      total: d20,
+      dc: 10,
+      success: d20 >= 10,
+      note: outcome
+    });
+
+    return { success: true, d20, outcome, deathSaves: char.deathSaves, hpCurrent: char.hpCurrent };
+  }
+
+  stabilizeCharacter(charId) {
+    if (!this.canControlCharacter(charId)) return false;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    char.deathSaves = { successes: 3, failures: 0, stabilized: true };
+    this.saveData();
+    return true;
+  }
+
+  resetDeathSaves(charId) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return;
+    char.deathSaves = { successes: 0, failures: 0, stabilized: false };
+    this.saveData();
+  }
+
+  // ==========================================
+  // DM LOOT CHESTS & PARTY ITEM DISTRIBUTION
+  // ==========================================
+  getLootChests() {
+    if (!Array.isArray(this.data.lootChests)) this.data.lootChests = [];
+    return this.data.lootChests;
+  }
+
+  async createLootChest({ title = 'Treasure Hoard', gold = 100, items = [] }) {
+    if (!Array.isArray(this.data.lootChests)) this.data.lootChests = [];
+    const chest = {
+      id: 'loot_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      title: title.trim() || 'Treasure Hoard',
+      gold: Math.max(0, parseInt(gold, 10) || 0),
+      items: items.map(it => ({ ...it, claimedBy: null })),
+      status: 'open',
+      createdAt: Date.now()
+    };
+    this.data.lootChests.unshift(chest);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.saveData(true);
+    return { success: true, chest };
+  }
+
+  async claimLootItem(chestId, itemIndex, charId) {
+    const chest = this.getLootChests().find(c => c.id === chestId);
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!chest || !char || !chest.items[itemIndex] || chest.items[itemIndex].claimedBy) {
+      return { success: false, error: 'Item already claimed or unavailable.' };
+    }
+    const lootItem = chest.items[itemIndex];
+    lootItem.claimedBy = char.name;
+    this.addInventoryItem(char.id, lootItem);
+    if (chest.gold <= 0 && chest.items.every(i => i.claimedBy)) {
+      chest.status = 'claimed';
+    }
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.notify();
+    return { success: true, item: lootItem, hero: char.name };
+  }
+
+  async splitLootGold(chestId) {
+    const chest = this.getLootChests().find(c => c.id === chestId);
+    const party = this.data.partyCharacters || [];
+    if (!chest || chest.gold <= 0 || party.length === 0) return { success: false };
+    const share = Math.floor(chest.gold / party.length);
+    const remainder = chest.gold % party.length;
+    party.forEach((p, idx) => {
+      if (!p.currency) p.currency = { gp: 50, sp: 0, cp: 0 };
+      p.currency.gp = (p.currency.gp || 0) + share + (idx === 0 ? remainder : 0);
+    });
+    const distributed = chest.gold;
+    chest.gold = 0;
+    if (chest.items.every(i => i.claimedBy)) chest.status = 'claimed';
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveLootChest(this.activeGameId || 'demo', chest);
+    }
+    this.saveData();
+    return { success: true, share, distributed, partyCount: party.length };
+  }
+
+  // ==========================================
+  // CUSTOM HOMEBREW MONSTER CREATOR
+  // ==========================================
+  getCustomMonsters() {
+    if (!Array.isArray(this.data.customMonsters)) this.data.customMonsters = [];
+    return this.data.customMonsters;
+  }
+
+  async createCustomMonster(monsterData) {
+    if (!Array.isArray(this.data.customMonsters)) this.data.customMonsters = [];
+    const monster = {
+      id: 'mon_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name: (monsterData.name || 'Custom Beast').trim(),
+      ac: parseInt(monsterData.ac, 10) || 14,
+      hp: parseInt(monsterData.hp, 10) || 35,
+      speed: parseInt(monsterData.speed, 10) || 6,
+      attackMod: parseInt(monsterData.attackMod, 10) || 5,
+      dmgFormula: (monsterData.dmgFormula || '1d8+3').trim(),
+      dmgType: (monsterData.dmgType || 'slashing').trim(),
+      crXp: parseInt(monsterData.crXp, 10) || 450,
+      abilities: Array.isArray(monsterData.abilities) ? monsterData.abilities : ['ember_hex'],
+      stats: monsterData.stats || { str: 14, dex: 12, con: 14, int: 8, wis: 10, cha: 8 },
+      portraitUrl: monsterData.portraitUrl || null
+    };
+    this.data.customMonsters.unshift(monster);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCustomMonster(this.activeGameId || 'demo', monster);
+    }
+    this.saveData(true);
+    return { success: true, monster };
+  }
+
+  async deleteCustomMonster(monsterId) {
+    this.data.customMonsters = this.getCustomMonsters().filter(m => m.id !== monsterId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteCustomMonster(monsterId);
+    }
+    this.saveData(true);
+  }
+
+  // ==========================================
+  // SESSION RECAP & AUTO-CHRONICLE GENERATOR
+  // ==========================================
+  getSessionRecaps() {
+    if (!Array.isArray(this.data.sessionRecaps)) this.data.sessionRecaps = [];
+    return this.data.sessionRecaps;
+  }
+
+  async generateSessionRecap(customTitle = '') {
+    const recaps = this.getSessionRecaps();
+    const sessionNumber = recaps.length + 1;
+    const rolls = (this.data.diceRollLogs || []).slice(0, 15);
+    const crits = rolls.filter(r => r.isCrit).map(r => `💥 ${r.rollerName} rolled a Natural 20 on ${r.label}!`);
+    const levelUps = rolls.filter(r => r.rollType === 'level_up').map(r => `⬆️ ${r.rollerName}: ${r.label} (${r.note})`);
+    const deathSaves = rolls.filter(r => r.rollType === 'death_save').map(r => `💀 ${r.rollerName}: ${r.note}`);
+    const recentJournals = (this.data.journalEntries || []).slice(0, 3).map(j => `📖 ${j.day} — ${j.title} (${j.location})`);
+    const recentLoot = this.getLootChests().slice(0, 2).map(c => `💰 Discovered ${c.title} (${c.items.length} items)`);
+
+    const highlights = [...levelUps, ...crits, ...deathSaves, ...recentLoot, ...recentJournals].slice(0, 10);
+    const partyNames = (this.data.partyCharacters || []).map(c => `${c.name} (Lv ${c.level || 1})`).join(', ');
+    const summary = `Session #${sessionNumber} Chronicle for ${partyNames || 'the Party'}. Recorded ${rolls.length} rolls, ${levelUps.length} level-up(s), ${crits.length} critical hit(s), and ${recentJournals.length} journal entry highlight(s).`;
+
+    const recap = {
+      id: 'recap_' + Date.now(),
+      sessionNumber,
+      title: (customTitle || `Session ${sessionNumber}: Chronicle of Aetheria`).trim(),
+      summary,
+      highlights: highlights.length > 0 ? highlights : ['The party explored the Bleeding Realms and prepared for their next encounter.'],
+      createdAt: Date.now()
+    };
+
+    recaps.unshift(recap);
+    if (!Array.isArray(this.data.timeline)) this.data.timeline = [];
+    this.data.timeline.unshift({
+      id: 'tl_' + recap.id,
+      era: `Session ${sessionNumber}`,
+      year: new Date().toLocaleDateString(),
+      title: recap.title,
+      description: recap.summary + (highlights.length ? ' Highlights: ' + highlights.slice(0, 3).join(' | ') : '')
+    });
+
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveSessionRecap(this.activeGameId || 'demo', recap);
+    }
+    this.saveData();
+    return { success: true, recap };
   }
 
   notify() {
@@ -6982,7 +7317,7 @@ function renderPartyView(container) {
     </div>
 
     <!-- Shared Bag of Holding / Party Stash Accordion -->
-    <details style="margin-bottom: 1.5rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
+    <details style="margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem 1rem;">
       <summary style="cursor: pointer; font-weight: bold; color: var(--text-gold); font-size: 0.9rem;">
         Shared Bag of Holding & Communal Equipment (Click to expand)
       </summary>
@@ -6990,6 +7325,25 @@ function renderPartyView(container) {
         ${settings.sharedBag || 'Empty bag of holding.'}
       </div>
     </details>
+
+    <!-- DM Loot Chest & Session Recap Bar (Supabase Synced) -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+      <div style="background: var(--bg-card); border: 1px solid rgba(212,175,55,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <strong style="color: var(--text-gold); font-size: 0.9rem;">💰 Party Loot Chests (Supabase)</strong>
+          ${prefs.dmMode ? `<button class="btn btn-sm btn-primary" id="party-drop-loot-btn" style="font-size: 0.72rem; padding: 2px 8px;">+ Drop Treasure</button>` : ''}
+        </div>
+        <div id="party-loot-chests-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem;"></div>
+      </div>
+
+      <div style="background: var(--bg-card); border: 1px solid rgba(56,189,248,0.35); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <strong style="color: #7dd3fc; font-size: 0.9rem;">📜 Session Recaps &amp; Auto-Chronicle</strong>
+          <button class="btn btn-sm" id="party-gen-recap-btn" style="font-size: 0.72rem; padding: 2px 8px; border-color: #38bdf8; color: #7dd3fc;">📜 Generate Recap</button>
+        </div>
+        <div id="party-recaps-list" style="display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem; max-height: 180px; overflow-y: auto;"></div>
+      </div>
+    </div>
 
     <!-- Character Cards Grid -->
     <div class="party-grid" id="party-characters-grid"></div>
@@ -7578,6 +7932,85 @@ function renderPartyView(container) {
 
   renderPartyCards();
 
+  // Render Loot Chests & Session Recaps
+  function renderLootAndRecaps() {
+    const lootList = container.querySelector('#party-loot-chests-list');
+    const recapList = container.querySelector('#party-recaps-list');
+    const activeHero = worldState.getActiveHero();
+
+    if (lootList) {
+      const chests = worldState.getLootChests();
+      if (chests.length === 0) {
+        lootList.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">No active treasure chests. DM can drop gold &amp; items here.</div>`;
+      } else {
+        lootList.innerHTML = chests.slice(0, 3).map(ch => `
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+              <strong style="color: var(--text-gold);">${ch.title}</strong>
+              ${ch.gold > 0 ? `<button class="btn-tiny split-gold-btn" data-id="${ch.id}" style="color:#fde047;">Split ${ch.gold} GP</button>` : `<span style="font-size:0.7rem;color:#86efac;">Gold Split</span>`}
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+              ${(ch.items || []).map((it, idx) => it.claimedBy
+                ? `<span style="font-size:0.7rem; color:var(--text-muted); text-decoration:line-through;">${it.name} (${it.claimedBy})</span>`
+                : `<button class="btn-tiny claim-loot-item-btn" data-chest="${ch.id}" data-idx="${idx}" title="Claim into ${activeHero ? activeHero.name : 'Active Hero'}'s inventory">Claim ${it.name}</button>`
+              ).join('')}
+            </div>
+          </div>
+        `).join('');
+
+        lootList.querySelectorAll('.split-gold-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            await worldState.splitLootGold(btn.getAttribute('data-id'));
+            renderLootAndRecaps();
+          });
+        });
+        lootList.querySelectorAll('.claim-loot-item-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!activeHero) return;
+            await worldState.claimLootItem(btn.getAttribute('data-chest'), parseInt(btn.getAttribute('data-idx'), 10), activeHero.id);
+            renderLootAndRecaps();
+          });
+        });
+      }
+    }
+
+    if (recapList) {
+      const recaps = worldState.getSessionRecaps();
+      if (recaps.length === 0) {
+        recapList.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">Click "Generate Recap" after a session to auto-compile combat highlights, level-ups &amp; journals into Supabase.</div>`;
+      } else {
+        recapList.innerHTML = recaps.slice(0, 3).map(rc => `
+          <div style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.5rem;">
+            <strong style="color: #7dd3fc;">${rc.title}</strong>
+            <div style="font-size: 0.74rem; color: var(--text-secondary); margin: 0.2rem 0;">${rc.summary}</div>
+            <ul style="margin: 0; padding-left: 1.1rem; font-size: 0.72rem; color: var(--text-muted);">
+              ${(rc.highlights || []).slice(0, 3).map(h => `<li>${h}</li>`).join('')}
+            </ul>
+          </div>
+        `).join('');
+      }
+    }
+  }
+  renderLootAndRecaps();
+
+  container.querySelector('#party-drop-loot-btn')?.addEventListener('click', async () => {
+    const title = prompt('Treasure Chest Name:', 'Goblin Vault Hoard');
+    if (!title) return;
+    const gold = parseInt(prompt('Gold Pieces (GP) in chest:', '150') || '150', 10);
+    const catalog = (typeof INVENTORY_CATALOG !== 'undefined') ? INVENTORY_CATALOG : [];
+    const sampleItems = [
+      catalog.find(i => i.name === 'Potion of Healing') || { name: 'Potion of Healing', category: 'potion', healDice: '2d4+2', quantity: 1 },
+      catalog.find(i => i.name === 'Cloak of Protection') || { name: 'Cloak of Protection', category: 'magic', acBonus: 1, requiresAttunement: true }
+    ];
+    await worldState.createLootChest({ title, gold, items: sampleItems });
+    renderLootAndRecaps();
+  });
+
+  container.querySelector('#party-gen-recap-btn')?.addEventListener('click', async () => {
+    await worldState.generateSessionRecap();
+    renderLootAndRecaps();
+  });
+
   // Party Gold Controls
   if (goldAddBtn) {
     goldAddBtn.addEventListener('click', () => {
@@ -8139,6 +8572,24 @@ function renderHeroView(container) {
     <!-- Live Dice Check Result Banner -->
     <div id="hero-dice-result-banner" style="display: none; margin-bottom: 1rem;" class="bastion-turn-log"></div>
 
+    <!-- Interactive 5.5e Death Saving Throws Banner (Active when at 0 HP) -->
+    ${(activeHero.hpCurrent || 0) <= 0 ? `
+      <div id="hero-death-saves-banner" style="margin-bottom: 1rem; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.55); border-radius: var(--radius-md); padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <strong style="color: #fca5a5; font-size: 0.95rem;">💀 ${activeHero.deathSaves?.stabilized ? 'STABILIZED AT 0 HP' : 'DEATH SAVING THROWS (0 HP — DYING)'}</strong>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">
+            Successes: <strong style="color: #86efac;">${'●'.repeat(activeHero.deathSaves?.successes || 0)}${'○'.repeat(3 - (activeHero.deathSaves?.successes || 0))}</strong>
+            &nbsp;&nbsp;|&nbsp;&nbsp;
+            Failures: <strong style="color: #f87171;">${'●'.repeat(activeHero.deathSaves?.failures || 0)}${'○'.repeat(3 - (activeHero.deathSaves?.failures || 0))}</strong>
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button type="button" class="btn btn-sm btn-primary" id="btn-hero-death-save" style="background: linear-gradient(135deg, #b91c1c, #ef4444); border-color: #f87171;">🎲 Roll Death Save</button>
+          <button type="button" class="btn btn-sm" id="btn-hero-stabilize" style="border-color: #86efac; color: #86efac;">🩹 Stabilize</button>
+        </div>
+      </div>
+    ` : ''}
+
     <!-- Main Two-Column Layout -->
     <div class="hero-view-grid">
       
@@ -8511,6 +8962,19 @@ function renderHeroView(container) {
       openLevelUpModal(activeHero.id, () => renderHeroView(container));
     });
   }
+
+  // Death Saving Throws & Stabilize Handlers
+  container.querySelector('#btn-hero-death-save')?.addEventListener('click', () => {
+    const res = worldState.rollDeathSave(activeHero.id);
+    if (res && res.success) {
+      try { soundEngine.playDiceRoll(res.d20 === 20); } catch (_) {}
+      renderHeroView(container);
+    }
+  });
+  container.querySelector('#btn-hero-stabilize')?.addEventListener('click', () => {
+    worldState.stabilizeCharacter(activeHero.id);
+    renderHeroView(container);
+  });
 
   // Rest Controls
   if (shortRestBtn) {
@@ -9733,6 +10197,9 @@ function renderCombatView(container) {
                   <option value="Troll">Troll (AC 15, HP 84)</option>
                   <option value="Red Dragon Wyrmling">Red Dragon Wyrmling (AC 17, HP 75)</option>
                 </optgroup>
+                <optgroup id="combat-custom-monsters-optgroup" label="Custom Homebrew Bestiary (Supabase)">
+                  ${(worldState.getCustomMonsters ? worldState.getCustomMonsters() : []).map(m => `<option value="custom_${m.id}">${m.name} (AC ${m.ac}, HP ${m.hp})</option>`).join('')}
+                </optgroup>
               </select>
 
               <select id="combat-spawn-team" class="theme-select" style="width: 100%; font-size: 0.75rem; margin-bottom: 0.4rem;" title="Side for spawned NPCs and monsters (party members always join the party)">
@@ -9743,6 +10210,7 @@ function renderCombatView(container) {
               <div style="display: flex; gap: 0.35rem; margin-bottom: 0.4rem;">
                 <button id="combat-drop-unit-btn" class="btn btn-sm btn-primary" style="flex: 1; font-size: 0.75rem;">Drop on Map</button>
                 <button id="combat-paint-btn" class="btn btn-sm" style="flex: 1; font-size: 0.75rem;">Paint: OFF</button>
+                <button id="combat-new-monster-btn" class="btn btn-sm" style="font-size: 0.72rem; border-color: var(--accent-gold); color: var(--text-gold);" title="Create Custom Homebrew Monster (Supabase)">+ Monster</button>
               </div>
             </div>
 
@@ -11664,10 +12132,50 @@ function initCombatEngine(container) {
       }));
       notifyToast(`${champName} spawned on map!`);
       renderInitiativeList();
+    } else if (val.startsWith('custom_')) {
+      const mid = val.replace('custom_', '');
+      const mData = (worldState.getCustomMonsters ? worldState.getCustomMonsters() : []).find(m => m.id === mid);
+      if (mData) {
+        cState.entities.push(buildMonsterEntity(mData.name, cx, cy, teamChoice, {
+          ac: mData.ac,
+          hp: mData.hp,
+          maxHp: mData.hp,
+          speed: mData.speed || 6,
+          attackMod: mData.attackMod || 5,
+          dmgFormula: mData.dmgFormula || '1d8+3',
+          dmgType: mData.dmgType || 'slashing',
+          abilities: mData.abilities || ['ember_hex'],
+          portraitUrl: mData.portraitUrl || null
+        }));
+        persistCombatToCloud();
+        notifyToast(`Custom monster ${mData.name} spawned!`);
+        renderInitiativeList();
+        renderEncounterPresetsUi();
+      }
     } else {
       cState.entities.push(buildMonsterEntity(val, cx, cy, teamChoice));
+      persistCombatToCloud();
       notifyToast(`${val} spawned on map (${teamChoice})!`);
       renderInitiativeList();
+      renderEncounterPresetsUi();
+    }
+  });
+
+  // Create Custom Homebrew Monster Button
+  container.querySelector('#combat-new-monster-btn')?.addEventListener('click', async () => {
+    const name = prompt('Custom Monster Name:', 'Obsidian Golem');
+    if (!name) return;
+    const ac = parseInt(prompt('Armor Class (AC):', '16') || '16', 10);
+    const hp = parseInt(prompt('Max Hit Points (HP):', '65') || '65', 10);
+    const dmgFormula = prompt('Attack Damage Dice (e.g. 2d8+4):', '2d8+4') || '2d8+4';
+    const crXp = parseInt(prompt('CR Experience Value (XP, e.g. 700):', '700') || '700', 10);
+    const res = await worldState.createCustomMonster({ name, ac, hp, dmgFormula, crXp });
+    if (res && res.success) {
+      const grp = container.querySelector('#combat-custom-monsters-optgroup');
+      if (grp) {
+        grp.innerHTML = worldState.getCustomMonsters().map(m => `<option value="custom_${m.id}">${m.name} (AC ${m.ac}, HP ${m.hp})</option>`).join('');
+      }
+      notifyToast(`Saved custom monster "${name}" to Supabase!`);
     }
   });
 
@@ -13398,7 +13906,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.5';
+    window.APP_VERSION = '1.6';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

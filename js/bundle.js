@@ -1596,6 +1596,98 @@ class SupabaseCampaignService {
     }
   }
 
+  async uploadPortraitImage(campaignId, charId, file) {
+    if (!this.isAvailable() || !file) return { success: false, error: 'Supabase Storage unavailable' };
+    try {
+      const ext = (file.name || 'portrait.png').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${campaignId || 'demo'}/${charId || 'hero'}_${Date.now()}.${ext}`;
+      const { error } = await this.client.storage
+        .from('portraits')
+        .upload(path, file, { upsert: true, contentType: file.type || 'image/png' });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      const { data: urlData } = this.client.storage.from('portraits').getPublicUrl(path);
+      return { success: true, url: urlData?.publicUrl || null, path };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  async fetchEncounterPresets(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('encounter_presets')
+      .select('id, name, difficulty, total_xp, snapshot, created_at')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.warn('[Supabase] fetchEncounterPresets error:', error.message);
+      return null;
+    }
+    return (data || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      difficulty: r.difficulty,
+      totalXp: r.total_xp || 0,
+      snapshot: r.snapshot || {},
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveEncounterPreset(campaignId, preset) {
+    if (!this.isAvailable() || !preset) return { success: false };
+    const { error } = await this.client.from('encounter_presets').upsert({
+      id: preset.id,
+      campaign_id: campaignId || 'demo',
+      name: preset.name,
+      difficulty: preset.difficulty || 'Medium',
+      total_xp: Number(preset.totalXp) || 0,
+      snapshot: preset.snapshot || {},
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  }
+
+  async deleteEncounterPreset(presetId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('encounter_presets').delete().eq('id', presetId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  }
+
+  subscribePresence(campaignId, userMeta, onPresenceSync) {
+    if (!this.isAvailable()) return null;
+    if (this.presenceChannel) {
+      try { this.client.removeChannel(this.presenceChannel); } catch (_) {}
+      this.presenceChannel = null;
+    }
+    const key = (userMeta && userMeta.id) ? userMeta.id : ('guest_' + Math.random().toString(36).slice(2, 8));
+    const channel = this.client.channel(`campaign-presence-${campaignId || 'demo'}`, {
+      config: { presence: { key } }
+    });
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const online = [];
+      Object.values(state).forEach(arr => {
+        if (Array.isArray(arr) && arr[0]) online.push(arr[0]);
+      });
+      if (onPresenceSync) onPresenceSync(online);
+    });
+    this.presenceChannel = channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({
+          id: key,
+          name: (userMeta && userMeta.name) || 'Adventurer',
+          role: (userMeta && userMeta.role) || 'Player',
+          onlineAt: new Date().toISOString()
+        });
+      }
+    });
+    return this.presenceChannel;
+  }
+
   // Row mappers: DB <-> App WorldData format
   mapCharacterFromDb(row) {
     const details = row.details || {};
@@ -2189,7 +2281,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.4';
+    this.version = '1.5';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2456,12 +2548,30 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const cloudData = await supabaseDb.loadCampaignData(targetId, seedData);
+      const [cloudData, remotePresets] = await Promise.all([
+        supabaseDb.loadCampaignData(targetId, seedData),
+        supabaseDb.fetchEncounterPresets(targetId)
+      ]);
       if (cloudData) {
         this.data = cloudData;
+        if (Array.isArray(remotePresets)) {
+          this.data.encounterPresets = remotePresets;
+        }
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
+
+      // 3b. Subscribe to Supabase Realtime Presence for live online player count
+      const activeUser = this.getActiveUser();
+      supabaseDb.subscribePresence(
+        targetId,
+        {
+          id: activeUser ? activeUser.id : ('guest_' + (this.prefs.activeHeroId || 'anon')),
+          name: activeUser ? activeUser.displayName : (this.prefs.dmMode ? 'Dungeon Master' : 'Adventurer'),
+          role: this.prefs.dmMode ? 'DM' : 'Player'
+        },
+        (online) => this.updateOnlinePlayers(online)
+      );
 
       // 3. Subscribe to Supabase Realtime for targeted single-table live updates
       supabaseDb.subscribeRealtime(
@@ -2750,6 +2860,66 @@ class WorldStateManager {
   saveCombatState(combatSnapshot) {
     this.data.combatState = combatSnapshot;
     this.saveData();
+  }
+
+  // ==========================================
+  // ENCOUNTER PRESETS, PORTRAITS & PRESENCE
+  // ==========================================
+  setCharacterPortrait(charId, portraitUrl) {
+    if (!this.canControlCharacter(charId)) return false;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    char.portraitUrl = portraitUrl || null;
+    this.saveData();
+    return true;
+  }
+
+  getEncounterPresets() {
+    if (!Array.isArray(this.data.encounterPresets)) this.data.encounterPresets = [];
+    return this.data.encounterPresets;
+  }
+
+  async saveEncounterPreset({ name, difficulty = 'Medium', totalXp = 0, snapshot = {} }) {
+    if (!Array.isArray(this.data.encounterPresets)) this.data.encounterPresets = [];
+    const preset = {
+      id: 'enc_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name: (name || 'Untitled Encounter').trim(),
+      difficulty,
+      totalXp: Number(totalXp) || 0,
+      snapshot,
+      createdAt: Date.now()
+    };
+    this.data.encounterPresets.unshift(preset);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveEncounterPreset(this.activeGameId || 'demo', preset);
+    }
+    this.saveData(true);
+    return { success: true, preset };
+  }
+
+  async deleteEncounterPreset(presetId) {
+    if (!Array.isArray(this.data.encounterPresets)) return;
+    this.data.encounterPresets = this.data.encounterPresets.filter(p => p.id !== presetId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteEncounterPreset(presetId);
+    }
+    this.saveData(true);
+  }
+
+  subscribePresence(listener) {
+    if (!this.presenceListeners) this.presenceListeners = [];
+    this.presenceListeners.push(listener);
+    listener(this.onlinePlayers || []);
+    return () => {
+      this.presenceListeners = this.presenceListeners.filter(l => l !== listener);
+    };
+  }
+
+  updateOnlinePlayers(players) {
+    this.onlinePlayers = Array.isArray(players) ? players : [];
+    (this.presenceListeners || []).forEach(l => {
+      try { l(this.onlinePlayers); } catch (_) {}
+    });
   }
 
   notify() {
@@ -7921,7 +8091,17 @@ function renderHeroView(container) {
     <!-- Top Hero Console Header -->
     <div class="hero-console-header">
       <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <div class="hero-avatar-large">${activeHero.avatar || 'PC'}</div>
+        <div style="position: relative; display: inline-flex;">
+          <div class="hero-avatar-large" style="overflow: hidden; padding: 0;">
+            ${activeHero.portraitUrl ? `<img src="${activeHero.portraitUrl}" alt="${activeHero.name}" style="width: 100%; height: 100%; object-fit: cover; border-radius: inherit;">` : (activeHero.avatar || 'PC')}
+          </div>
+          ${worldState.canControlCharacter(activeHero.id) ? `
+            <label for="hero-portrait-file-input" title="Upload Character Portrait (Supabase Storage)" style="position: absolute; bottom: -4px; right: -4px; width: 24px; height: 24px; border-radius: 50%; background: var(--bg-secondary); border: 1px solid var(--accent-gold); color: var(--text-gold); display: flex; align-items: center; justify-content: center; font-size: 0.72rem; cursor: pointer; box-shadow: var(--shadow-sm);">
+              📷
+            </label>
+            <input type="file" id="hero-portrait-file-input" accept="image/*" style="display: none;">
+          ` : ''}
+        </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <h2 style="margin: 0; font-size: 1.6rem; color: var(--text-gold);">${activeHero.name}</h2>
@@ -8300,6 +8480,29 @@ function renderHeroView(container) {
   const invMount = container.querySelector('#hero-inventory-manager-mount');
   if (invMount && typeof renderInventoryManager === 'function') {
     renderInventoryManager(invMount, activeHero, () => renderHeroView(container));
+  }
+
+  // Upload Custom Character Portrait (Supabase Storage)
+  const portraitInput = container.querySelector('#hero-portrait-file-input');
+  if (portraitInput) {
+    portraitInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+        const res = await supabaseDb.uploadPortraitImage(worldState.activeGameId || 'demo', activeHero.id, file);
+        if (res && res.success && res.url) {
+          worldState.setCharacterPortrait(activeHero.id, res.url);
+          renderHeroView(container);
+          return;
+        }
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        worldState.setCharacterPortrait(activeHero.id, reader.result);
+        renderHeroView(container);
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   // Level Up Wizard Trigger
@@ -9577,6 +9780,25 @@ function renderCombatView(container) {
                 <button id="combat-map-clear-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 3px 6px; color: #fca5a5;">Clear Map</button>
               </div>
             </div>
+
+            <!-- DM Encounter Builder & Saved Presets (Supabase) -->
+            <div id="combat-encounter-presets-panel" style="margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.4rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-gold); text-transform: uppercase;">⚔️ Encounter Presets</span>
+                <span id="combat-cr-badge" style="font-size: 0.66rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: rgba(234,179,8,0.2); color: #fde047;">Medium</span>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <input type="text" id="combat-preset-name" placeholder="Encounter name..." style="flex: 1; font-size: 0.7rem; padding: 2px 6px; background: var(--bg-tertiary); color: #fff; border: 1px solid var(--border-subtle); border-radius: 3px;">
+                <button id="combat-save-preset-btn" class="btn btn-sm btn-primary" style="font-size: 0.68rem; padding: 2px 7px;">💾 Save</button>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <select id="combat-preset-select" class="theme-select" style="flex: 1; font-size: 0.7rem; padding: 2px 5px;">
+                  <option value="">-- Saved Encounters (0) --</option>
+                </select>
+                <button id="combat-load-preset-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 2px 6px;">Load</button>
+                <button id="combat-delete-preset-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 2px 6px; color: #fca5a5;" title="Delete Preset">&times;</button>
+              </div>
+            </div>
           </div>
 
           <!-- Combat & Real-time Dice Roll Log -->
@@ -10123,6 +10345,76 @@ function initCombatEngine(container) {
     }
   }
 
+  // 5.5e Condition Automation & Concentration Save Engine
+  function getEntityConditions(unit) {
+    if (!unit) return [];
+    const local = Array.isArray(unit.conditions) ? unit.conditions : [];
+    if (unit.team === 'player') {
+      const pc = (worldState.data.partyCharacters || []).find(c => c.id === (unit.partyCharId || unit.id));
+      if (pc && Array.isArray(pc.conditions)) {
+        return Array.from(new Set([...local, ...pc.conditions]));
+      }
+    }
+    return local;
+  }
+
+  function getConditionCombatEffects(attacker, target, isMelee = true) {
+    const atkConds = getEntityConditions(attacker).map(c => c.toLowerCase());
+    const tgtConds = getEntityConditions(target).map(c => c.toLowerCase());
+    let hasAdv = false;
+    let hasDis = false;
+    let autoCrit = false;
+    let blessed = atkConds.includes('blessed');
+
+    if (atkConds.includes('poisoned') || atkConds.includes('blinded') || atkConds.includes('prone') || atkConds.includes('restrained')) {
+      hasDis = true;
+    }
+    if (atkConds.includes('invisible') || atkConds.includes('advantage')) {
+      hasAdv = true;
+    }
+    if (tgtConds.includes('paralyzed') || tgtConds.includes('unconscious')) {
+      hasAdv = true;
+      if (isMelee) autoCrit = true;
+    }
+    if (tgtConds.includes('stunned') || tgtConds.includes('restrained') || tgtConds.includes('blinded')) {
+      hasAdv = true;
+    }
+    if (tgtConds.includes('prone')) {
+      if (isMelee) hasAdv = true;
+      else hasDis = true;
+    }
+
+    let resolvedMode = 'NORMAL';
+    if (hasAdv && !hasDis) resolvedMode = 'ADVANTAGE';
+    else if (hasDis && !hasAdv) resolvedMode = 'DISADVANTAGE';
+    return { resolvedMode, autoCrit, blessed };
+  }
+
+  function checkConcentrationSave(target, damageAmount) {
+    if (!target || !target.concentratingOn || damageAmount <= 0 || target.hp <= 0) {
+      if (target && target.hp <= 0 && target.concentratingOn) {
+        logMsg(`💫 ${target.name} drops concentration on ${target.concentratingOn} (incapacitated).`, '#fbbf24');
+        target.concentratingOn = null;
+      }
+      return null;
+    }
+    const dc = Math.max(10, Math.floor(damageAmount / 2));
+    const pc = (worldState.data.partyCharacters || []).find(c => c.id === (target.partyCharId || target.id));
+    const hasWarCaster = pc && Array.isArray(pc.feats) && pc.feats.some(f => String(f).toLowerCase().includes('war caster'));
+    const r = rollWithMode(hasWarCaster ? 'ADVANTAGE' : 'NORMAL');
+    const mod = computeSaveMod(target, 'CON');
+    const total = r.d20 + mod;
+    const kept = total >= dc;
+    if (kept) {
+      logMsg(`🧠 ${target.name} maintains Concentration on ${target.concentratingOn}! (CON Save ${total} vs DC ${dc}${hasWarCaster ? ', War Caster Adv' : ''})`, '#38bdf8');
+    } else {
+      logMsg(`💥 ${target.name} LOSES Concentration on ${target.concentratingOn}! (CON Save ${total} vs DC ${dc})`, '#f87171');
+      pushFloater(target, 'CONC LOST', '#f87171');
+      target.concentratingOn = null;
+    }
+    return { dc, total, kept, hasWarCaster };
+  }
+
   function applyDamage(target, amount, type, sourceName) {
     target.hp = Math.max(0, target.hp - amount);
     pushFloater(target, `-${amount}`, '#ef4444');
@@ -10130,6 +10422,9 @@ function initCombatEngine(container) {
     if (target.hp === 0) {
       if (target.team === 'player') logMsg(`💀 ${target.name} drops to 0 HP and falls unconscious!`, '#f87171');
       else logMsg(`☠ ${target.name} is slain${sourceName ? ` by ${sourceName}` : ''}!`, '#fbbf24');
+    }
+    if (target.concentratingOn) {
+      checkConcentrationSave(target, amount);
     }
   }
 
@@ -10205,22 +10500,26 @@ function initCombatEngine(container) {
   }
 
   function makeAttackRoll(actor, target, bonus, label, dmgFormula, dmgType, advMode = 'NORMAL') {
-    const r = rollWithMode(advMode);
-    const total = r.d20 + bonus;
-    const crit = r.d20 === 20;
-    const hit = crit || (r.d20 !== 1 && total >= target.ac);
+    const isMelee = dist(actor, target) <= 1;
+    const condFx = getConditionCombatEffects(actor, target, isMelee);
+    const effectiveMode = advMode !== 'NORMAL' ? advMode : condFx.resolvedMode;
+    const r = rollWithMode(effectiveMode);
+    const blessBonus = condFx.blessed ? (Math.floor(Math.random() * 4) + 1) : 0;
+    const total = r.d20 + bonus + blessBonus;
+    const hit = r.d20 === 20 || (r.d20 !== 1 && total >= target.ac);
+    const crit = r.d20 === 20 || (hit && condFx.autoCrit);
     const entry = {
       rollerName: rollerLabel(actor),
       rollerAvatar: actor.avatar || '🎲',
       rollType: 'attack',
       label: `${label} → ${target.name}`,
-      formula: `${r.text} ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+      formula: `${r.text} ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}${blessBonus ? ` + ${blessBonus} (Bless)` : ''}`,
       d20Result: r.d20,
       total,
       dc: target.ac,
       success: hit,
-      advantageMode: advMode.toLowerCase(),
-      note: `vs AC ${target.ac}`
+      advantageMode: effectiveMode.toLowerCase(),
+      note: `vs AC ${target.ac}${condFx.autoCrit ? ' [AUTO-CRIT]' : ''}`
     };
     worldState.logDiceRoll(entry);
     appendRollToCombatLog(entry);
@@ -11564,12 +11863,119 @@ function initCombatEngine(container) {
     notifyToast('Battlemap background cleared');
   });
 
+  // Encounter Builder CR Calculator & Supabase Presets
+  const MONSTER_XP_MAP = {
+    'Goblin': 50, 'Goblin Alpha': 200, 'Orc': 100, 'Skeleton': 50,
+    'Owlbear': 700, 'Troll': 1800, 'Red Dragon Wyrmling': 1100
+  };
+  const LEVEL_XP_THRESHOLDS = {
+    1: [25, 50, 75, 100], 2: [50, 100, 150, 200], 3: [75, 150, 225, 400],
+    4: [125, 250, 375, 500], 5: [250, 500, 750, 1100], 6: [300, 600, 900, 1400],
+    7: [350, 750, 1100, 1700], 8: [450, 900, 1400, 2100], 9: [550, 1100, 1600, 2400],
+    10: [600, 1200, 1900, 2800]
+  };
+
+  function calculateEncounterDifficulty(entities = cState.entities, partyChars = worldState.data.partyCharacters || []) {
+    const foes = (entities || []).filter(e => e.team === 'enemy' && e.hp > 0);
+    const totalXp = foes.reduce((sum, f) => {
+      const matched = Object.keys(MONSTER_XP_MAP).find(k => (f.name || '').toLowerCase().includes(k.toLowerCase()));
+      return sum + (matched ? MONSTER_XP_MAP[matched] : Math.max(50, (f.maxHp || 15) * 10));
+    }, 0);
+    const partyList = partyChars.length > 0 ? partyChars : [{ level: 3 }];
+    let easy = 0, med = 0, hard = 0, deadly = 0;
+    partyList.forEach(p => {
+      const t = LEVEL_XP_THRESHOLDS[Math.min(10, Math.max(1, parseInt(p.level, 10) || 1))] || [250, 500, 750, 1100];
+      easy += t[0]; med += t[1]; hard += t[2]; deadly += t[3];
+    });
+    let rating = 'Easy';
+    if (totalXp >= deadly) rating = 'Deadly';
+    else if (totalXp >= hard) rating = 'Hard';
+    else if (totalXp >= med) rating = 'Medium';
+    return { rating, totalXp, monsterCount: foes.length, partyCount: partyList.length };
+  }
+
+  function renderEncounterPresetsUi() {
+    const badge = container.querySelector('#combat-cr-badge');
+    const sel = container.querySelector('#combat-preset-select');
+    const diff = calculateEncounterDifficulty();
+    if (badge) {
+      badge.textContent = `${diff.rating} (${diff.totalXp} XP)`;
+      const colors = { Easy: '#86efac', Medium: '#fde047', Hard: '#fdba74', Deadly: '#fca5a5' };
+      badge.style.color = colors[diff.rating] || '#fde047';
+    }
+    if (sel) {
+      const presets = worldState.getEncounterPresets();
+      sel.innerHTML = `<option value="">-- Saved Encounters (${presets.length}) --</option>` +
+        presets.map(p => `<option value="${p.id}">${p.name} [${p.difficulty} • ${p.totalXp} XP]</option>`).join('');
+    }
+  }
+
+  async function saveCurrentEncounterPreset(nameInput) {
+    const diff = calculateEncounterDifficulty();
+    const snapshot = {
+      gridSize: cState.gridSize,
+      entities: cState.entities.map(e => ({ ...e })),
+      terrain: { ...cState.terrain },
+      fogOfWar: { ...cState.fogOfWar },
+      mapImageUrl: cState.mapImageUrl || null
+    };
+    const res = await worldState.saveEncounterPreset({
+      name: nameInput || `Encounter (${diff.rating})`,
+      difficulty: diff.rating,
+      totalXp: diff.totalXp,
+      snapshot
+    });
+    renderEncounterPresetsUi();
+    return res;
+  }
+
+  function loadEncounterPresetById(presetId) {
+    const preset = worldState.getEncounterPresets().find(p => p.id === presetId);
+    if (!preset || !preset.snapshot) return false;
+    const snap = preset.snapshot;
+    if (snap.gridSize) cState.gridSize = snap.gridSize;
+    if (Array.isArray(snap.entities)) cState.entities = snap.entities.map(e => ({ ...e }));
+    cState.terrain = { ...(snap.terrain || {}) };
+    cState.fogOfWar = { ...(snap.fogOfWar || {}) };
+    setMapImageUrl(snap.mapImageUrl || null);
+    persistCombatToCloud();
+    renderEncounterPresetsUi();
+    renderTurnUi();
+    renderInitiativeList();
+    notifyToast(`Loaded encounter: ${preset.name}`);
+    return true;
+  }
+
+  container.querySelector('#combat-save-preset-btn')?.addEventListener('click', async () => {
+    const nameEl = container.querySelector('#combat-preset-name');
+    const name = (nameEl?.value || '').trim();
+    const res = await saveCurrentEncounterPreset(name);
+    if (res && res.success) {
+      if (nameEl) nameEl.value = '';
+      notifyToast(`Encounter saved to Supabase: ${res.preset.name}`);
+    }
+  });
+  container.querySelector('#combat-load-preset-btn')?.addEventListener('click', () => {
+    const sel = container.querySelector('#combat-preset-select');
+    if (sel && sel.value) loadEncounterPresetById(sel.value);
+  });
+  container.querySelector('#combat-delete-preset-btn')?.addEventListener('click', async () => {
+    const sel = container.querySelector('#combat-preset-select');
+    if (sel && sel.value) {
+      await worldState.deleteEncounterPreset(sel.value);
+      renderEncounterPresetsUi();
+      notifyToast('Encounter preset deleted');
+    }
+  });
+  renderEncounterPresetsUi();
+
   // Hydrate initial combat session from Supabase if present
   hydrateCombatFromCloud();
 
   // Listen to worldState state changes for real-time rolls, requests & live battlemat sync
   worldState.subscribe(() => {
     hydrateCombatFromCloud();
+    renderEncounterPresetsUi();
     renderCombatPendingBanner();
     updateActionUi();
     renderTurnUi();
@@ -11799,28 +12205,66 @@ function initCombatEngine(container) {
       ctx.strokeRect(cState.selectedEntity.x * ts + 1, cState.selectedEntity.y * ts + 1, ts - 2, ts - 2);
     }
 
-    // Entities
+    // Entities (with Custom Portrait Token Art & Concentration Indicator)
+    const tokenImages = cState._tokenImages || (cState._tokenImages = {});
     cState.entities.forEach(ent => {
       if (ent.hp <= 0) return;
       const px = ent.x * ts + ts/2;
       const py = ent.y * ts + ts/2;
       const radius = ts * 0.42;
 
+      const pc = ent.team === 'player' ? (worldState.data.partyCharacters || []).find(c => c.id === (ent.partyCharId || ent.id)) : null;
+      const portraitUrl = ent.portraitUrl || (pc && pc.portraitUrl) || null;
+
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fillStyle = ent.color || '#3b82f6';
       ctx.fill();
+
+      if (portraitUrl) {
+        if (!tokenImages[portraitUrl]) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = portraitUrl;
+          tokenImages[portraitUrl] = img;
+        }
+        const img = tokenImages[portraitUrl];
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(px, py, radius - 1, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(img, px - radius, py - radius, radius * 2, radius * 2);
+          ctx.restore();
+        }
+      } else {
+        // Avatar Initials
+        const initial = ent.avatar || (ent.name || 'U').substring(0, 2).toUpperCase();
+        ctx.font = `bold ${Math.floor(ts * 0.38)}px Inter, sans-serif`;
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(initial, px, py);
+      }
+
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.strokeStyle = ent.id === cState.selectedEntity?.id ? '#fff' : (ent.team === 'player' ? '#60a5fa' : '#ef4444');
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Avatar Initials
-      const initial = ent.avatar || (ent.name || 'U').substring(0, 2).toUpperCase();
-      ctx.font = `bold ${Math.floor(ts * 0.38)}px Inter, sans-serif`;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(initial, px, py);
+      // Concentration badge ('C')
+      if (ent.concentratingOn) {
+        ctx.beginPath();
+        ctx.arc(px + radius * 0.72, py - radius * 0.72, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#eab308';
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 9px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('C', px + radius * 0.72, py - radius * 0.72);
+      }
 
       // HP Bar
       const hpR = Math.max(0, ent.hp / ent.maxHp);
@@ -11936,6 +12380,11 @@ function initCombatEngine(container) {
     setTerrainTile,
     setFogTile,
     setMapImageUrl,
+    calculateEncounterDifficulty,
+    saveCurrentEncounterPreset,
+    loadEncounterPresetById,
+    getConditionCombatEffects,
+    checkConcentrationSave,
     dist,
     logMsg
   };
@@ -12949,7 +13398,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '1.4';
+    window.APP_VERSION = '1.5';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;
@@ -13549,6 +13998,19 @@ const diceRoller = new DiceRollerModal();
       cloudSyncBadge.textContent = labels[status] || '☁️ Synced';
     }
     worldState.subscribeCloudStatus(updateCloudSyncBadge);
+
+    // Online Player Presence Pill
+    const presenceBadge = document.getElementById('online-presence-indicator');
+    worldState.subscribePresence((online) => {
+      if (!presenceBadge) return;
+      if (online && online.length > 0) {
+        presenceBadge.style.display = 'inline-flex';
+        presenceBadge.textContent = `🟢 ${online.length} Online`;
+        presenceBadge.title = 'Online now: ' + online.map(p => `${p.name} (${p.role})`).join(', ');
+      } else {
+        presenceBadge.style.display = 'none';
+      }
+    });
 
     // Initialize Game Portal on site load
     renderGameTiles();

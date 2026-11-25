@@ -198,6 +198,98 @@ class SupabaseCampaignService {
     }
   }
 
+  async uploadPortraitImage(campaignId, charId, file) {
+    if (!this.isAvailable() || !file) return { success: false, error: 'Supabase Storage unavailable' };
+    try {
+      const ext = (file.name || 'portrait.png').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${campaignId || 'demo'}/${charId || 'hero'}_${Date.now()}.${ext}`;
+      const { error } = await this.client.storage
+        .from('portraits')
+        .upload(path, file, { upsert: true, contentType: file.type || 'image/png' });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      const { data: urlData } = this.client.storage.from('portraits').getPublicUrl(path);
+      return { success: true, url: urlData?.publicUrl || null, path };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  async fetchEncounterPresets(campaignId) {
+    if (!this.isAvailable()) return null;
+    const { data, error } = await this.client
+      .from('encounter_presets')
+      .select('id, name, difficulty, total_xp, snapshot, created_at')
+      .eq('campaign_id', campaignId || 'demo')
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.warn('[Supabase] fetchEncounterPresets error:', error.message);
+      return null;
+    }
+    return (data || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      difficulty: r.difficulty,
+      totalXp: r.total_xp || 0,
+      snapshot: r.snapshot || {},
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+    }));
+  }
+
+  async saveEncounterPreset(campaignId, preset) {
+    if (!this.isAvailable() || !preset) return { success: false };
+    const { error } = await this.client.from('encounter_presets').upsert({
+      id: preset.id,
+      campaign_id: campaignId || 'demo',
+      name: preset.name,
+      difficulty: preset.difficulty || 'Medium',
+      total_xp: Number(preset.totalXp) || 0,
+      snapshot: preset.snapshot || {},
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  }
+
+  async deleteEncounterPreset(presetId) {
+    if (!this.isAvailable()) return { success: false };
+    const { error } = await this.client.from('encounter_presets').delete().eq('id', presetId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  }
+
+  subscribePresence(campaignId, userMeta, onPresenceSync) {
+    if (!this.isAvailable()) return null;
+    if (this.presenceChannel) {
+      try { this.client.removeChannel(this.presenceChannel); } catch (_) {}
+      this.presenceChannel = null;
+    }
+    const key = (userMeta && userMeta.id) ? userMeta.id : ('guest_' + Math.random().toString(36).slice(2, 8));
+    const channel = this.client.channel(`campaign-presence-${campaignId || 'demo'}`, {
+      config: { presence: { key } }
+    });
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const online = [];
+      Object.values(state).forEach(arr => {
+        if (Array.isArray(arr) && arr[0]) online.push(arr[0]);
+      });
+      if (onPresenceSync) onPresenceSync(online);
+    });
+    this.presenceChannel = channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({
+          id: key,
+          name: (userMeta && userMeta.name) || 'Adventurer',
+          role: (userMeta && userMeta.role) || 'Player',
+          onlineAt: new Date().toISOString()
+        });
+      }
+    });
+    return this.presenceChannel;
+  }
+
   // Row mappers: DB <-> App WorldData format
   mapCharacterFromDb(row) {
     const details = row.details || {};

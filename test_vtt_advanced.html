@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Advanced VTT Tests: Encounter Builder, Portraits, Conditions, Concentration & Presence</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+  <div id="combat-mount" style="display: none;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=1.5"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+
+        // 1. Character Portrait Storage & Persistence
+        const hero = worldState.createPartyCharacter({
+          name: 'Sylvara Moonblade',
+          level: 5,
+          species: 'Elf',
+          classRole: 'Wizard',
+          hitDie: 6,
+          hpMax: 32,
+          stats: { str: 8, dex: 16, con: 14, int: 18, wis: 12, cha: 10 }
+        });
+        hero.feats = ['War Caster'];
+        const setPort = worldState.setCharacterPortrait(hero.id, 'https://example.com/sylvara.png');
+        assert(setPort === true && hero.portraitUrl === 'https://example.com/sylvara.png', "Character portrait URL saved on hero");
+        const mappedDb = supabaseDb.mapCharacterToDb(hero, 'demo');
+        const restored = supabaseDb.mapCharacterFromDb(mappedDb);
+        assert(restored.portraitUrl === 'https://example.com/sylvara.png', "Supabase DB mapper preserves portraitUrl in details JSONB");
+        assert(typeof supabaseDb.uploadPortraitImage === 'function', "supabaseDb.uploadPortraitImage Storage helper exists");
+
+        // 2. Encounter Builder CR Difficulty & Save/Load Presets
+        const mount = document.getElementById('combat-mount');
+        renderCombatView(mount);
+        const ctrl = mount._combatController;
+        assert(typeof ctrl.calculateEncounterDifficulty === 'function', "calculateEncounterDifficulty exposed on combat controller");
+
+        const diff = ctrl.calculateEncounterDifficulty([
+          { team: 'enemy', name: 'Troll', hp: 84, maxHp: 84 },
+          { team: 'enemy', name: 'Red Dragon Wyrmling', hp: 75, maxHp: 75 }
+        ], [{ level: 3 }, { level: 3 }, { level: 3 }]);
+        assert(diff.rating === 'Deadly' && diff.totalXp === 2900, "CR difficulty calculator rates Troll + Wyrmling vs Lv3 party as Deadly (2900 XP)");
+
+        ctrl.setTerrainTile(2, 2, 'water');
+        const saveRes = await ctrl.saveCurrentEncounterPreset('Bridge Ambush');
+        assert(saveRes.success && saveRes.preset && saveRes.preset.name === 'Bridge Ambush', "Encounter preset 'Bridge Ambush' saved");
+        ctrl.setTerrainTile(2, 2, null);
+        const loaded = ctrl.loadEncounterPresetById(saveRes.preset.id);
+        assert(loaded === true && ctrl.cState.terrain['2,2'] === 'water', "Loading encounter preset restores saved terrain & units");
+
+        // 3. 5.5e Condition Automation
+        const fxPoisoned = ctrl.getConditionCombatEffects({ conditions: ['Poisoned'] }, { conditions: [] }, true);
+        assert(fxPoisoned.resolvedMode === 'DISADVANTAGE', "Poisoned attacker automatically gets DISADVANTAGE");
+
+        const fxParalyzedMelee = ctrl.getConditionCombatEffects({ conditions: [] }, { conditions: ['Paralyzed'] }, true);
+        assert(fxParalyzedMelee.resolvedMode === 'ADVANTAGE' && fxParalyzedMelee.autoCrit === true, "Melee vs Paralyzed target gets ADVANTAGE + AUTO-CRIT");
+
+        const fxProneRanged = ctrl.getConditionCombatEffects({ conditions: [] }, { conditions: ['Prone'] }, false);
+        assert(fxProneRanged.resolvedMode === 'DISADVANTAGE', "Ranged attack vs Prone target gets DISADVANTAGE");
+
+        const fxProneMelee = ctrl.getConditionCombatEffects({ conditions: [] }, { conditions: ['Prone'] }, true);
+        assert(fxProneMelee.resolvedMode === 'ADVANTAGE', "Melee attack vs Prone target gets ADVANTAGE");
+
+        // 4. Concentration Save Automation (DC = max(10, floor(dmg/2)) + War Caster Advantage)
+        const casterEntity = {
+          id: hero.id,
+          partyCharId: hero.id,
+          name: hero.name,
+          team: 'player',
+          hp: 30,
+          maxHp: 32,
+          stats: hero.stats,
+          concentratingOn: 'Haste'
+        };
+        const concRes = ctrl.checkConcentrationSave(casterEntity, 26);
+        assert(concRes !== null && concRes.dc === 13, "Concentration save DC calculated accurately: max(10, floor(26/2)) = 13 (got " + (concRes ? concRes.dc : 'null') + ")");
+        assert(concRes && concRes.hasWarCaster === true, "War Caster feat automatically detected for Concentration Advantage");
+
+        // 5. Live Player Presence Tracking
+        assert(typeof supabaseDb.subscribePresence === 'function', "supabaseDb.subscribePresence Realtime Presence helper exists");
+        let lastOnline = [];
+        const unsubPres = worldState.subscribePresence((list) => { lastOnline = list; });
+        worldState.updateOnlinePlayers([{ id: 'u1', name: 'Alex', role: 'Player' }, { id: 'u2', name: 'DM', role: 'DM' }]);
+        unsubPres();
+        assert(lastOnline.length === 2, "Presence tracker notifies listeners with 2 online players");
+
+        // 6. Verify DOM presence indicator & v1.5
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        assert(doc.getElementById('online-presence-indicator') !== null, "#online-presence-indicator pill exists in index.html");
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v1.5', "Version indicator updated to v1.5");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("ADVANCED VTT TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -296,6 +296,25 @@ export function renderCombatView(container) {
                 <button id="combat-map-clear-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 3px 6px; color: #fca5a5;">Clear Map</button>
               </div>
             </div>
+
+            <!-- DM Encounter Builder & Saved Presets (Supabase) -->
+            <div id="combat-encounter-presets-panel" style="margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.4rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-gold); text-transform: uppercase;">⚔️ Encounter Presets</span>
+                <span id="combat-cr-badge" style="font-size: 0.66rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: rgba(234,179,8,0.2); color: #fde047;">Medium</span>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <input type="text" id="combat-preset-name" placeholder="Encounter name..." style="flex: 1; font-size: 0.7rem; padding: 2px 6px; background: var(--bg-tertiary); color: #fff; border: 1px solid var(--border-subtle); border-radius: 3px;">
+                <button id="combat-save-preset-btn" class="btn btn-sm btn-primary" style="font-size: 0.68rem; padding: 2px 7px;">💾 Save</button>
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <select id="combat-preset-select" class="theme-select" style="flex: 1; font-size: 0.7rem; padding: 2px 5px;">
+                  <option value="">-- Saved Encounters (0) --</option>
+                </select>
+                <button id="combat-load-preset-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 2px 6px;">Load</button>
+                <button id="combat-delete-preset-btn" class="btn btn-sm" style="font-size: 0.68rem; padding: 2px 6px; color: #fca5a5;" title="Delete Preset">&times;</button>
+              </div>
+            </div>
           </div>
 
           <!-- Combat & Real-time Dice Roll Log -->
@@ -842,6 +861,76 @@ function initCombatEngine(container) {
     }
   }
 
+  // 5.5e Condition Automation & Concentration Save Engine
+  function getEntityConditions(unit) {
+    if (!unit) return [];
+    const local = Array.isArray(unit.conditions) ? unit.conditions : [];
+    if (unit.team === 'player') {
+      const pc = (worldState.data.partyCharacters || []).find(c => c.id === (unit.partyCharId || unit.id));
+      if (pc && Array.isArray(pc.conditions)) {
+        return Array.from(new Set([...local, ...pc.conditions]));
+      }
+    }
+    return local;
+  }
+
+  function getConditionCombatEffects(attacker, target, isMelee = true) {
+    const atkConds = getEntityConditions(attacker).map(c => c.toLowerCase());
+    const tgtConds = getEntityConditions(target).map(c => c.toLowerCase());
+    let hasAdv = false;
+    let hasDis = false;
+    let autoCrit = false;
+    let blessed = atkConds.includes('blessed');
+
+    if (atkConds.includes('poisoned') || atkConds.includes('blinded') || atkConds.includes('prone') || atkConds.includes('restrained')) {
+      hasDis = true;
+    }
+    if (atkConds.includes('invisible') || atkConds.includes('advantage')) {
+      hasAdv = true;
+    }
+    if (tgtConds.includes('paralyzed') || tgtConds.includes('unconscious')) {
+      hasAdv = true;
+      if (isMelee) autoCrit = true;
+    }
+    if (tgtConds.includes('stunned') || tgtConds.includes('restrained') || tgtConds.includes('blinded')) {
+      hasAdv = true;
+    }
+    if (tgtConds.includes('prone')) {
+      if (isMelee) hasAdv = true;
+      else hasDis = true;
+    }
+
+    let resolvedMode = 'NORMAL';
+    if (hasAdv && !hasDis) resolvedMode = 'ADVANTAGE';
+    else if (hasDis && !hasAdv) resolvedMode = 'DISADVANTAGE';
+    return { resolvedMode, autoCrit, blessed };
+  }
+
+  function checkConcentrationSave(target, damageAmount) {
+    if (!target || !target.concentratingOn || damageAmount <= 0 || target.hp <= 0) {
+      if (target && target.hp <= 0 && target.concentratingOn) {
+        logMsg(`💫 ${target.name} drops concentration on ${target.concentratingOn} (incapacitated).`, '#fbbf24');
+        target.concentratingOn = null;
+      }
+      return null;
+    }
+    const dc = Math.max(10, Math.floor(damageAmount / 2));
+    const pc = (worldState.data.partyCharacters || []).find(c => c.id === (target.partyCharId || target.id));
+    const hasWarCaster = pc && Array.isArray(pc.feats) && pc.feats.some(f => String(f).toLowerCase().includes('war caster'));
+    const r = rollWithMode(hasWarCaster ? 'ADVANTAGE' : 'NORMAL');
+    const mod = computeSaveMod(target, 'CON');
+    const total = r.d20 + mod;
+    const kept = total >= dc;
+    if (kept) {
+      logMsg(`🧠 ${target.name} maintains Concentration on ${target.concentratingOn}! (CON Save ${total} vs DC ${dc}${hasWarCaster ? ', War Caster Adv' : ''})`, '#38bdf8');
+    } else {
+      logMsg(`💥 ${target.name} LOSES Concentration on ${target.concentratingOn}! (CON Save ${total} vs DC ${dc})`, '#f87171');
+      pushFloater(target, 'CONC LOST', '#f87171');
+      target.concentratingOn = null;
+    }
+    return { dc, total, kept, hasWarCaster };
+  }
+
   function applyDamage(target, amount, type, sourceName) {
     target.hp = Math.max(0, target.hp - amount);
     pushFloater(target, `-${amount}`, '#ef4444');
@@ -849,6 +938,9 @@ function initCombatEngine(container) {
     if (target.hp === 0) {
       if (target.team === 'player') logMsg(`💀 ${target.name} drops to 0 HP and falls unconscious!`, '#f87171');
       else logMsg(`☠ ${target.name} is slain${sourceName ? ` by ${sourceName}` : ''}!`, '#fbbf24');
+    }
+    if (target.concentratingOn) {
+      checkConcentrationSave(target, amount);
     }
   }
 
@@ -924,22 +1016,26 @@ function initCombatEngine(container) {
   }
 
   function makeAttackRoll(actor, target, bonus, label, dmgFormula, dmgType, advMode = 'NORMAL') {
-    const r = rollWithMode(advMode);
-    const total = r.d20 + bonus;
-    const crit = r.d20 === 20;
-    const hit = crit || (r.d20 !== 1 && total >= target.ac);
+    const isMelee = dist(actor, target) <= 1;
+    const condFx = getConditionCombatEffects(actor, target, isMelee);
+    const effectiveMode = advMode !== 'NORMAL' ? advMode : condFx.resolvedMode;
+    const r = rollWithMode(effectiveMode);
+    const blessBonus = condFx.blessed ? (Math.floor(Math.random() * 4) + 1) : 0;
+    const total = r.d20 + bonus + blessBonus;
+    const hit = r.d20 === 20 || (r.d20 !== 1 && total >= target.ac);
+    const crit = r.d20 === 20 || (hit && condFx.autoCrit);
     const entry = {
       rollerName: rollerLabel(actor),
       rollerAvatar: actor.avatar || '🎲',
       rollType: 'attack',
       label: `${label} → ${target.name}`,
-      formula: `${r.text} ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}`,
+      formula: `${r.text} ${bonus >= 0 ? '+' : '-'} ${Math.abs(bonus)}${blessBonus ? ` + ${blessBonus} (Bless)` : ''}`,
       d20Result: r.d20,
       total,
       dc: target.ac,
       success: hit,
-      advantageMode: advMode.toLowerCase(),
-      note: `vs AC ${target.ac}`
+      advantageMode: effectiveMode.toLowerCase(),
+      note: `vs AC ${target.ac}${condFx.autoCrit ? ' [AUTO-CRIT]' : ''}`
     };
     worldState.logDiceRoll(entry);
     appendRollToCombatLog(entry);
@@ -2283,12 +2379,119 @@ function initCombatEngine(container) {
     notifyToast('Battlemap background cleared');
   });
 
+  // Encounter Builder CR Calculator & Supabase Presets
+  const MONSTER_XP_MAP = {
+    'Goblin': 50, 'Goblin Alpha': 200, 'Orc': 100, 'Skeleton': 50,
+    'Owlbear': 700, 'Troll': 1800, 'Red Dragon Wyrmling': 1100
+  };
+  const LEVEL_XP_THRESHOLDS = {
+    1: [25, 50, 75, 100], 2: [50, 100, 150, 200], 3: [75, 150, 225, 400],
+    4: [125, 250, 375, 500], 5: [250, 500, 750, 1100], 6: [300, 600, 900, 1400],
+    7: [350, 750, 1100, 1700], 8: [450, 900, 1400, 2100], 9: [550, 1100, 1600, 2400],
+    10: [600, 1200, 1900, 2800]
+  };
+
+  function calculateEncounterDifficulty(entities = cState.entities, partyChars = worldState.data.partyCharacters || []) {
+    const foes = (entities || []).filter(e => e.team === 'enemy' && e.hp > 0);
+    const totalXp = foes.reduce((sum, f) => {
+      const matched = Object.keys(MONSTER_XP_MAP).find(k => (f.name || '').toLowerCase().includes(k.toLowerCase()));
+      return sum + (matched ? MONSTER_XP_MAP[matched] : Math.max(50, (f.maxHp || 15) * 10));
+    }, 0);
+    const partyList = partyChars.length > 0 ? partyChars : [{ level: 3 }];
+    let easy = 0, med = 0, hard = 0, deadly = 0;
+    partyList.forEach(p => {
+      const t = LEVEL_XP_THRESHOLDS[Math.min(10, Math.max(1, parseInt(p.level, 10) || 1))] || [250, 500, 750, 1100];
+      easy += t[0]; med += t[1]; hard += t[2]; deadly += t[3];
+    });
+    let rating = 'Easy';
+    if (totalXp >= deadly) rating = 'Deadly';
+    else if (totalXp >= hard) rating = 'Hard';
+    else if (totalXp >= med) rating = 'Medium';
+    return { rating, totalXp, monsterCount: foes.length, partyCount: partyList.length };
+  }
+
+  function renderEncounterPresetsUi() {
+    const badge = container.querySelector('#combat-cr-badge');
+    const sel = container.querySelector('#combat-preset-select');
+    const diff = calculateEncounterDifficulty();
+    if (badge) {
+      badge.textContent = `${diff.rating} (${diff.totalXp} XP)`;
+      const colors = { Easy: '#86efac', Medium: '#fde047', Hard: '#fdba74', Deadly: '#fca5a5' };
+      badge.style.color = colors[diff.rating] || '#fde047';
+    }
+    if (sel) {
+      const presets = worldState.getEncounterPresets();
+      sel.innerHTML = `<option value="">-- Saved Encounters (${presets.length}) --</option>` +
+        presets.map(p => `<option value="${p.id}">${p.name} [${p.difficulty} • ${p.totalXp} XP]</option>`).join('');
+    }
+  }
+
+  async function saveCurrentEncounterPreset(nameInput) {
+    const diff = calculateEncounterDifficulty();
+    const snapshot = {
+      gridSize: cState.gridSize,
+      entities: cState.entities.map(e => ({ ...e })),
+      terrain: { ...cState.terrain },
+      fogOfWar: { ...cState.fogOfWar },
+      mapImageUrl: cState.mapImageUrl || null
+    };
+    const res = await worldState.saveEncounterPreset({
+      name: nameInput || `Encounter (${diff.rating})`,
+      difficulty: diff.rating,
+      totalXp: diff.totalXp,
+      snapshot
+    });
+    renderEncounterPresetsUi();
+    return res;
+  }
+
+  function loadEncounterPresetById(presetId) {
+    const preset = worldState.getEncounterPresets().find(p => p.id === presetId);
+    if (!preset || !preset.snapshot) return false;
+    const snap = preset.snapshot;
+    if (snap.gridSize) cState.gridSize = snap.gridSize;
+    if (Array.isArray(snap.entities)) cState.entities = snap.entities.map(e => ({ ...e }));
+    cState.terrain = { ...(snap.terrain || {}) };
+    cState.fogOfWar = { ...(snap.fogOfWar || {}) };
+    setMapImageUrl(snap.mapImageUrl || null);
+    persistCombatToCloud();
+    renderEncounterPresetsUi();
+    renderTurnUi();
+    renderInitiativeList();
+    notifyToast(`Loaded encounter: ${preset.name}`);
+    return true;
+  }
+
+  container.querySelector('#combat-save-preset-btn')?.addEventListener('click', async () => {
+    const nameEl = container.querySelector('#combat-preset-name');
+    const name = (nameEl?.value || '').trim();
+    const res = await saveCurrentEncounterPreset(name);
+    if (res && res.success) {
+      if (nameEl) nameEl.value = '';
+      notifyToast(`Encounter saved to Supabase: ${res.preset.name}`);
+    }
+  });
+  container.querySelector('#combat-load-preset-btn')?.addEventListener('click', () => {
+    const sel = container.querySelector('#combat-preset-select');
+    if (sel && sel.value) loadEncounterPresetById(sel.value);
+  });
+  container.querySelector('#combat-delete-preset-btn')?.addEventListener('click', async () => {
+    const sel = container.querySelector('#combat-preset-select');
+    if (sel && sel.value) {
+      await worldState.deleteEncounterPreset(sel.value);
+      renderEncounterPresetsUi();
+      notifyToast('Encounter preset deleted');
+    }
+  });
+  renderEncounterPresetsUi();
+
   // Hydrate initial combat session from Supabase if present
   hydrateCombatFromCloud();
 
   // Listen to worldState state changes for real-time rolls, requests & live battlemat sync
   worldState.subscribe(() => {
     hydrateCombatFromCloud();
+    renderEncounterPresetsUi();
     renderCombatPendingBanner();
     updateActionUi();
     renderTurnUi();
@@ -2518,28 +2721,66 @@ function initCombatEngine(container) {
       ctx.strokeRect(cState.selectedEntity.x * ts + 1, cState.selectedEntity.y * ts + 1, ts - 2, ts - 2);
     }
 
-    // Entities
+    // Entities (with Custom Portrait Token Art & Concentration Indicator)
+    const tokenImages = cState._tokenImages || (cState._tokenImages = {});
     cState.entities.forEach(ent => {
       if (ent.hp <= 0) return;
       const px = ent.x * ts + ts/2;
       const py = ent.y * ts + ts/2;
       const radius = ts * 0.42;
 
+      const pc = ent.team === 'player' ? (worldState.data.partyCharacters || []).find(c => c.id === (ent.partyCharId || ent.id)) : null;
+      const portraitUrl = ent.portraitUrl || (pc && pc.portraitUrl) || null;
+
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fillStyle = ent.color || '#3b82f6';
       ctx.fill();
+
+      if (portraitUrl) {
+        if (!tokenImages[portraitUrl]) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = portraitUrl;
+          tokenImages[portraitUrl] = img;
+        }
+        const img = tokenImages[portraitUrl];
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(px, py, radius - 1, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(img, px - radius, py - radius, radius * 2, radius * 2);
+          ctx.restore();
+        }
+      } else {
+        // Avatar Initials
+        const initial = ent.avatar || (ent.name || 'U').substring(0, 2).toUpperCase();
+        ctx.font = `bold ${Math.floor(ts * 0.38)}px Inter, sans-serif`;
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(initial, px, py);
+      }
+
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.strokeStyle = ent.id === cState.selectedEntity?.id ? '#fff' : (ent.team === 'player' ? '#60a5fa' : '#ef4444');
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Avatar Initials
-      const initial = ent.avatar || (ent.name || 'U').substring(0, 2).toUpperCase();
-      ctx.font = `bold ${Math.floor(ts * 0.38)}px Inter, sans-serif`;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(initial, px, py);
+      // Concentration badge ('C')
+      if (ent.concentratingOn) {
+        ctx.beginPath();
+        ctx.arc(px + radius * 0.72, py - radius * 0.72, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#eab308';
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 9px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('C', px + radius * 0.72, py - radius * 0.72);
+      }
 
       // HP Bar
       const hpR = Math.max(0, ent.hp / ent.maxHp);
@@ -2655,6 +2896,11 @@ function initCombatEngine(container) {
     setTerrainTile,
     setFogTile,
     setMapImageUrl,
+    calculateEncounterDifficulty,
+    saveCurrentEncounterPreset,
+    loadEncounterPresetById,
+    getConditionCombatEffects,
+    checkConcentrationSave,
     dist,
     logMsg
   };

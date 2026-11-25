@@ -256,7 +256,17 @@ export function renderHeroView(container) {
     <!-- Top Hero Console Header -->
     <div class="hero-console-header">
       <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <div class="hero-avatar-large">${activeHero.avatar || 'PC'}</div>
+        <div style="position: relative; display: inline-flex;">
+          <div class="hero-avatar-large" style="overflow: hidden; padding: 0;">
+            ${activeHero.portraitUrl ? `<img src="${activeHero.portraitUrl}" alt="${activeHero.name}" style="width: 100%; height: 100%; object-fit: cover; border-radius: inherit;">` : (activeHero.avatar || 'PC')}
+          </div>
+          ${worldState.canControlCharacter(activeHero.id) ? `
+            <label for="hero-portrait-file-input" title="Upload Character Portrait (Supabase Storage)" style="position: absolute; bottom: -4px; right: -4px; width: 24px; height: 24px; border-radius: 50%; background: var(--bg-secondary); border: 1px solid var(--accent-gold); color: var(--text-gold); display: flex; align-items: center; justify-content: center; font-size: 0.72rem; cursor: pointer; box-shadow: var(--shadow-sm);">
+              📷
+            </label>
+            <input type="file" id="hero-portrait-file-input" accept="image/*" style="display: none;">
+          ` : ''}
+        </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <h2 style="margin: 0; font-size: 1.6rem; color: var(--text-gold);">${activeHero.name}</h2>
@@ -635,6 +645,29 @@ export function renderHeroView(container) {
   const invMount = container.querySelector('#hero-inventory-manager-mount');
   if (invMount && typeof renderInventoryManager === 'function') {
     renderInventoryManager(invMount, activeHero, () => renderHeroView(container));
+  }
+
+  // Upload Custom Character Portrait (Supabase Storage)
+  const portraitInput = container.querySelector('#hero-portrait-file-input');
+  if (portraitInput) {
+    portraitInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+        const res = await supabaseDb.uploadPortraitImage(worldState.activeGameId || 'demo', activeHero.id, file);
+        if (res && res.success && res.url) {
+          worldState.setCharacterPortrait(activeHero.id, res.url);
+          renderHeroView(container);
+          return;
+        }
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        worldState.setCharacterPortrait(activeHero.id, reader.result);
+        renderHeroView(container);
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   // Level Up Wizard Trigger

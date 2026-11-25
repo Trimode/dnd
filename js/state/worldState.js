@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '1.4';
+    this.version = '1.5';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -276,12 +276,30 @@ class WorldStateManager {
 
       // 2. Load campaign data (auto-seeds 'demo' on first launch if empty)
       const seedData = targetId === 'demo' ? this.data : JSON.parse(JSON.stringify(INITIAL_WORLD_DATA));
-      const cloudData = await supabaseDb.loadCampaignData(targetId, seedData);
+      const [cloudData, remotePresets] = await Promise.all([
+        supabaseDb.loadCampaignData(targetId, seedData),
+        supabaseDb.fetchEncounterPresets(targetId)
+      ]);
       if (cloudData) {
         this.data = cloudData;
+        if (Array.isArray(remotePresets)) {
+          this.data.encounterPresets = remotePresets;
+        }
         this.ensureDefaults();
         this.saveData(true); // Update local cache without re-triggering cloud write
       }
+
+      // 3b. Subscribe to Supabase Realtime Presence for live online player count
+      const activeUser = this.getActiveUser();
+      supabaseDb.subscribePresence(
+        targetId,
+        {
+          id: activeUser ? activeUser.id : ('guest_' + (this.prefs.activeHeroId || 'anon')),
+          name: activeUser ? activeUser.displayName : (this.prefs.dmMode ? 'Dungeon Master' : 'Adventurer'),
+          role: this.prefs.dmMode ? 'DM' : 'Player'
+        },
+        (online) => this.updateOnlinePlayers(online)
+      );
 
       // 3. Subscribe to Supabase Realtime for targeted single-table live updates
       supabaseDb.subscribeRealtime(
@@ -570,6 +588,66 @@ class WorldStateManager {
   saveCombatState(combatSnapshot) {
     this.data.combatState = combatSnapshot;
     this.saveData();
+  }
+
+  // ==========================================
+  // ENCOUNTER PRESETS, PORTRAITS & PRESENCE
+  // ==========================================
+  setCharacterPortrait(charId, portraitUrl) {
+    if (!this.canControlCharacter(charId)) return false;
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    if (!char) return false;
+    char.portraitUrl = portraitUrl || null;
+    this.saveData();
+    return true;
+  }
+
+  getEncounterPresets() {
+    if (!Array.isArray(this.data.encounterPresets)) this.data.encounterPresets = [];
+    return this.data.encounterPresets;
+  }
+
+  async saveEncounterPreset({ name, difficulty = 'Medium', totalXp = 0, snapshot = {} }) {
+    if (!Array.isArray(this.data.encounterPresets)) this.data.encounterPresets = [];
+    const preset = {
+      id: 'enc_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      name: (name || 'Untitled Encounter').trim(),
+      difficulty,
+      totalXp: Number(totalXp) || 0,
+      snapshot,
+      createdAt: Date.now()
+    };
+    this.data.encounterPresets.unshift(preset);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveEncounterPreset(this.activeGameId || 'demo', preset);
+    }
+    this.saveData(true);
+    return { success: true, preset };
+  }
+
+  async deleteEncounterPreset(presetId) {
+    if (!Array.isArray(this.data.encounterPresets)) return;
+    this.data.encounterPresets = this.data.encounterPresets.filter(p => p.id !== presetId);
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.deleteEncounterPreset(presetId);
+    }
+    this.saveData(true);
+  }
+
+  subscribePresence(listener) {
+    if (!this.presenceListeners) this.presenceListeners = [];
+    this.presenceListeners.push(listener);
+    listener(this.onlinePlayers || []);
+    return () => {
+      this.presenceListeners = this.presenceListeners.filter(l => l !== listener);
+    };
+  }
+
+  updateOnlinePlayers(players) {
+    this.onlinePlayers = Array.isArray(players) ? players : [];
+    (this.presenceListeners || []).forEach(l => {
+      try { l(this.onlinePlayers); } catch (_) {}
+    });
   }
 
   notify() {

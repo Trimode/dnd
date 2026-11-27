@@ -1395,6 +1395,171 @@ const INITIAL_WORLD_DATA = {
 };
   const worldData = INITIAL_WORLD_DATA;
 
+  // 1.25. MAGIC COMPENDIUM & MERCHANT ARCHETYPES
+/**
+ * D&D 5.5e Magic Item Compendium & Dynamic Merchant Archetype Catalogs (v2.1)
+ */
+const MERCHANT_ARCHETYPES = [
+  {
+    id: 'shopkeeper',
+    name: 'General Shopkeeper',
+    icon: '🏪',
+    defaultShopName: 'The Crossroads Outfitter',
+    defaultMerchantName: 'Bramwell Copperkettle',
+    greeting: '"Packs, torches, rope, and a few oddities from passing caravans. Everything an adventurer needs!"',
+    defaultMaxRarity: 'Uncommon',
+    includeMagicDefault: true
+  },
+  {
+    id: 'alchemist',
+    name: 'Alchemist & Apothecary',
+    icon: '⚗️',
+    defaultShopName: 'The Bubbling Alembic',
+    defaultMerchantName: 'Vespera Nightbloom',
+    greeting: '"Mind the green vials — they bite back. Potions, poultices, and elixirs brewed fresh at dawn."',
+    defaultMaxRarity: 'Rare',
+    includeMagicDefault: true
+  },
+  {
+    id: 'blacksmith',
+    name: 'Blacksmith & Armorer',
+    icon: '⚒️',
+    defaultShopName: 'Ironheart Forge & Anvil',
+    defaultMerchantName: 'Torin Emberforge',
+    greeting: '"Steel tempered in dragon-coal. If it breaks in battle, bring me the hilt and I will forge it twice as strong."',
+    defaultMaxRarity: 'Rare',
+    includeMagicDefault: true
+  },
+  {
+    id: 'tailor',
+    name: 'Tailor & Clothier',
+    icon: '🧵',
+    defaultShopName: 'The Gilded Spindle',
+    defaultMerchantName: 'Madame Mireille Silkbough',
+    greeting: '"Fine silks, weatherproof cloaks, and enchantments woven subtly into every hem."',
+    defaultMaxRarity: 'Rare',
+    includeMagicDefault: true
+  },
+  {
+    id: 'arcanist',
+    name: 'Arcane Enchanter & Scribe',
+    icon: '🔮',
+    defaultShopName: 'Aether & Quill Curios',
+    defaultMerchantName: 'Archivist Orin Vance',
+    greeting: '"Scrolls, staves, focuses, and rings attuned to the ley-currents. Please do not touch the floating orbs."',
+    defaultMaxRarity: 'Very Rare',
+    includeMagicDefault: true
+  },
+  {
+    id: 'fence',
+    name: 'Black Market Fence',
+    icon: '🗡️',
+    defaultShopName: 'The Velvet Alley Backroom',
+    defaultMerchantName: 'Sable "No-Questions" Vex',
+    greeting: '"Keep your voice low and your coin purse heavy. You did not buy these from me."',
+    defaultMaxRarity: 'Very Rare',
+    includeMagicDefault: true
+  },
+  {
+    id: 'relic_peddler',
+    name: 'Traveling Relic Peddler',
+    icon: '🐪',
+    defaultShopName: 'Wandering Bazaar of Oddities',
+    defaultMerchantName: 'Zephyr the Star-Bound',
+    greeting: '"From sunken citadels and astral vaults — my wagon moves at sunrise, so claim your destiny tonight!"',
+    defaultMaxRarity: 'Legendary',
+    includeMagicDefault: true
+  }
+];
+const MUNDANE_VENDOR_CATALOG = [
+  // Shopkeeper / General
+  { id: 'mun-explorers-pack', name: "Explorer's Pack", category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 10, stock: 5, merchantTypes: ['shopkeeper'], notes: 'Backpack, bedroll, mess kit, tinderbox, 10 torches, 10 rations, waterskin, 50ft rope.' },
+  { id: 'mun-healers-kit', name: "Healer's Kit", category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 5, stock: 6, merchantTypes: ['shopkeeper', 'alchemist'], notes: '10 uses. Stabilize a dying creature without a Medicine check.' },
+  { id: 'mun-hooded-lantern', name: 'Hooded Lantern', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 5, stock: 4, merchantTypes: ['shopkeeper'], notes: 'Bright light 30ft, dim light +30ft for 6 hours per pint of oil.' },
+  { id: 'mun-silk-rope', name: 'Silk Rope (50 ft)', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 10, stock: 5, merchantTypes: ['shopkeeper', 'tailor'], notes: 'Lightweight 5 lb rope, 2 HP, DC 17 Strength to burst.' },
+  { id: 'mun-rations', name: 'Trail Rations (5 Days)', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 3, stock: 12, merchantTypes: ['shopkeeper'], notes: 'Dry travel fare for overland journeys.' },
+  { id: 'mun-climbers-kit', name: "Climber's Kit", category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 3, merchantTypes: ['shopkeeper', 'blacksmith'], notes: 'Pitons, boot tips, gloves, and harness for anchoring climbs.' },
+  // Alchemist
+  { id: 'mun-antitoxin', name: 'Antitoxin Vial', category: 'potion', rarity: 'Mundane', isMagic: false, priceGp: 50, stock: 4, merchantTypes: ['alchemist', 'shopkeeper'], notes: 'Advantage on saving throws against poison for 1 hour.' },
+  { id: 'mun-alchemists-fire', name: "Alchemist's Fire (Flask)", category: 'potion', rarity: 'Mundane', isMagic: false, priceGp: 50, stock: 4, merchantTypes: ['alchemist', 'fence'], notes: 'Ranged throw 20ft; target takes 1d4 fire damage at start of each turn until extinguished.' },
+  { id: 'mun-acid-vial', name: 'Acid Vial', category: 'potion', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 5, merchantTypes: ['alchemist', 'fence'], notes: 'Ranged throw 20ft; deals 2d6 acid damage on hit.' },
+  { id: 'mun-holy-water', name: 'Holy Water (Flask)', category: 'potion', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 4, merchantTypes: ['alchemist', 'arcanist'], notes: 'Deals 2d6 radiant damage to fiends and undead.' },
+  { id: 'mun-herbalism-kit', name: 'Herbalism Kit', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 5, stock: 3, merchantTypes: ['alchemist'], notes: 'Required to brew Potions of Healing and antitoxins.' },
+  // Blacksmith
+  { id: 'mun-longsword', name: 'Masterwork Longsword', category: 'weapon', rarity: 'Mundane', isMagic: false, priceGp: 15, stock: 4, damageDice: '1d8', merchantTypes: ['blacksmith'], notes: '1d8 slashing (Versatile 1d10), Sap Mastery.' },
+  { id: 'mun-greatsword', name: 'Tempered Greatsword', category: 'weapon', rarity: 'Mundane', isMagic: false, priceGp: 50, stock: 2, damageDice: '2d6', merchantTypes: ['blacksmith'], notes: '2d6 slashing, Heavy, Two-Handed, Graze Mastery.' },
+  { id: 'mun-longbow', name: 'Yew Longbow + 20 Arrows', category: 'weapon', rarity: 'Mundane', isMagic: false, priceGp: 51, stock: 3, damageDice: '1d8', merchantTypes: ['blacksmith', 'shopkeeper'], notes: '1d8 piercing, 150/600ft, Slow Mastery.' },
+  { id: 'mun-shield', name: 'Steel Heater Shield', category: 'shield', rarity: 'Mundane', isMagic: false, priceGp: 10, stock: 5, acBonus: 2, merchantTypes: ['blacksmith'], notes: '+2 AC while wielded.' },
+  { id: 'mun-breastplate', name: 'Breastplate Armor', category: 'armor', rarity: 'Mundane', isMagic: false, priceGp: 400, stock: 2, baseAc: 14, armorType: 'medium', merchantTypes: ['blacksmith'], notes: 'AC 14 + DEX (max 2). No Stealth disadvantage.' },
+  { id: 'mun-half-plate', name: 'Half Plate Armor', category: 'armor', rarity: 'Mundane', isMagic: false, priceGp: 750, stock: 1, baseAc: 15, armorType: 'medium', merchantTypes: ['blacksmith'], notes: 'AC 15 + DEX (max 2).' },
+  { id: 'mun-plate-armor', name: 'Full Plate Armor', category: 'armor', rarity: 'Mundane', isMagic: false, priceGp: 1500, stock: 1, baseAc: 18, armorType: 'heavy', merchantTypes: ['blacksmith'], notes: 'AC 18 (Requires STR 15).' },
+  // Tailor
+  { id: 'mun-fine-clothes', name: 'Noble Courtier Attire', category: 'wondrous', rarity: 'Mundane', isMagic: false, priceGp: 15, stock: 4, merchantTypes: ['tailor'], notes: 'Tailored velvet & gold trim; grants social credibility at high courts.' },
+  { id: 'mun-travel-cloak', name: 'Fur-Lined Weather Cloak', category: 'wondrous', rarity: 'Mundane', isMagic: false, priceGp: 12, stock: 6, merchantTypes: ['tailor', 'shopkeeper'], notes: 'Protects against freezing rain and harsh mountain winds.' },
+  { id: 'mun-studded-leather', name: 'Tailored Studded Leather', category: 'armor', rarity: 'Mundane', isMagic: false, priceGp: 45, stock: 3, baseAc: 12, armorType: 'light', merchantTypes: ['tailor', 'blacksmith', 'fence'], notes: 'AC 12 + DEX mod. Supple dark-dyed leather.' },
+  { id: 'mun-weavers-kit', name: "Weaver's & Disguise Fabrics", category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 3, merchantTypes: ['tailor', 'fence'], notes: 'Reversible cloaks, dyes, and theatrical garments.' },
+  // Arcanist
+  { id: 'mun-arcane-focus', name: 'Crystal Arcane Focus', category: 'wondrous', rarity: 'Mundane', isMagic: false, priceGp: 10, stock: 5, merchantTypes: ['arcanist'], notes: 'Channeled spellcasting focus for Wizards, Sorcerers & Warlocks.' },
+  { id: 'mun-spellbook', name: 'Gilded Blank Spellbook', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 50, stock: 3, merchantTypes: ['arcanist'], notes: '100 vellum pages bound in dragon-embossed leather.' },
+  { id: 'mun-component-pouch', name: 'Component Pouch', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 4, merchantTypes: ['arcanist', 'alchemist'], notes: 'Watertight belt pouch holding standard material components.' },
+  // Fence
+  { id: 'mun-thieves-tools', name: "Master Thieves' Tools", category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 25, stock: 4, merchantTypes: ['fence', 'shopkeeper'], notes: 'File, lockpicks, small mirror, narrow-bladed scissors, and pliers.' },
+  { id: 'mun-basic-poison', name: 'Vial of Basic Poison', category: 'potion', rarity: 'Mundane', isMagic: false, priceGp: 100, stock: 3, merchantTypes: ['fence', 'alchemist'], notes: 'Coat 1 weapon or 3 ammo; DC 10 CON save or +1d4 poison damage.' },
+  { id: 'mun-caltrops', name: 'Bag of Caltrops & Smoke Pellets', category: 'gear', rarity: 'Mundane', isMagic: false, priceGp: 15, stock: 6, merchantTypes: ['fence'], notes: 'Covers a 5ft square or creates quick getaway cover.' }
+];
+const MAGIC_ITEM_COMPENDIUM = [
+  // COMMON
+  { id: 'mag-potion-healing', name: 'Potion of Healing', rarity: 'Common', category: 'Potion', attunement: false, priceGp: 50, healDice: '2d4+2', merchantTypes: ['alchemist', 'shopkeeper', 'relic_peddler'], description: 'Regain 2d4 + 2 Hit Points as a Bonus Action (D&D 5.5e).' },
+  { id: 'mag-cloak-billowing', name: 'Cloak of Billowing', rarity: 'Common', category: 'Wondrous', attunement: false, priceGp: 60, merchantTypes: ['tailor', 'relic_peddler'], description: 'Use a Bonus Action to make this cloak billow dramatically even in still air.' },
+  { id: 'mag-clockwork-amulet', name: 'Clockwork Amulet', rarity: 'Common', category: 'Wondrous', attunement: false, priceGp: 100, merchantTypes: ['arcanist', 'shopkeeper', 'relic_peddler'], description: 'Once per day, forgo rolling the d20 on an attack roll and take a 10 instead.' },
+  { id: 'mag-moontouched-sword', name: 'Moon-Touched Longsword', rarity: 'Common', category: 'Weapon', attunement: false, priceGp: 100, damageDice: '1d8', merchantTypes: ['blacksmith', 'relic_peddler'], description: 'Unsheathed, sheds bright moonlight in a 15-foot radius and dim light for an additional 15 feet.' },
+  { id: 'mag-scroll-shield', name: 'Spell Scroll (1st Level: Shield)', rarity: 'Common', category: 'Scroll', attunement: false, priceGp: 75, merchantTypes: ['arcanist', 'relic_peddler'], description: 'Single-use scroll granting +5 AC as a Reaction until the start of your next turn.' },
+  { id: 'mag-ruby-warmage', name: 'Ruby of the War Mage', rarity: 'Common', category: 'Wondrous', attunement: true, priceGp: 100, merchantTypes: ['arcanist', 'blacksmith'], description: 'Attach to a simple or martial weapon to use it as a spellcasting focus.' },
+
+  // UNCOMMON
+  { id: 'mag-potion-greater-healing', name: 'Potion of Greater Healing', rarity: 'Uncommon', category: 'Potion', attunement: false, priceGp: 150, healDice: '4d4+4', merchantTypes: ['alchemist', 'relic_peddler'], description: 'Regain 4d4 + 4 Hit Points as a Bonus Action.' },
+  { id: 'mag-bag-of-holding', name: 'Bag of Holding', rarity: 'Uncommon', category: 'Wondrous', attunement: false, priceGp: 400, merchantTypes: ['shopkeeper', 'arcanist', 'relic_peddler'], description: 'Extradimensional interior holds up to 500 lbs (64 cu ft) while always weighing only 15 lbs.' },
+  { id: 'mag-cloak-protection', name: 'Cloak of Protection', rarity: 'Uncommon', category: 'Wondrous', attunement: true, priceGp: 500, acBonus: 1, merchantTypes: ['tailor', 'arcanist', 'relic_peddler'], description: 'Gain a +1 bonus to Armor Class and all Saving Throws while worn.' },
+  { id: 'mag-boots-elvenkind', name: 'Boots of Elvenkind', rarity: 'Uncommon', category: 'Wondrous', attunement: false, priceGp: 400, merchantTypes: ['tailor', 'fence', 'relic_peddler'], description: 'Your steps make no sound; gain Advantage on Dexterity (Stealth) checks made to move silently.' },
+  { id: 'mag-cloak-elvenkind', name: 'Cloak of Elvenkind', rarity: 'Uncommon', category: 'Wondrous', attunement: true, priceGp: 450, merchantTypes: ['tailor', 'fence'], description: 'Pull hood up to give Wisdom (Perception) checks to see you Disadvantage and your Stealth checks Advantage.' },
+  { id: 'mag-weapon-plus1', name: '+1 Enchanted Weapon', rarity: 'Uncommon', category: 'Weapon', attunement: false, priceGp: 450, damageDice: '1d8+1', merchantTypes: ['blacksmith', 'relic_peddler'], description: 'Gain a +1 bonus to attack and damage rolls made with this magic weapon.' },
+  { id: 'mag-shield-plus1', name: '+1 Sentinel Shield', rarity: 'Uncommon', category: 'Armor', attunement: false, priceGp: 450, acBonus: 3, merchantTypes: ['blacksmith'], description: 'Provides +3 total AC (+2 shield + 1 magic) and sharpens battlefield awareness.' },
+  { id: 'mag-pearl-power', name: 'Pearl of Power', rarity: 'Uncommon', category: 'Wondrous', attunement: true, priceGp: 450, merchantTypes: ['arcanist', 'relic_peddler'], description: 'Once per dawn, regain one expended spell slot of up to 3rd level.' },
+  { id: 'mag-wand-magic-missiles', name: 'Wand of Magic Missiles', rarity: 'Uncommon', category: 'Wand', attunement: false, priceGp: 450, merchantTypes: ['arcanist', 'fence', 'relic_peddler'], description: '7 charges. Expend 1+ charges to cast Magic Missile without expending a spell slot.' },
+  { id: 'mag-gloves-thievery', name: 'Gloves of Thievery', rarity: 'Uncommon', category: 'Wondrous', attunement: false, priceGp: 450, merchantTypes: ['fence', 'tailor'], description: 'Invisible while worn. Grants a +5 bonus to Sleight of Hand and Thieves\' Tools checks.' },
+  { id: 'mag-alchemy-jug', name: 'Alchemy Jug', rarity: 'Uncommon', category: 'Wondrous', attunement: false, priceGp: 350, merchantTypes: ['alchemist', 'shopkeeper'], description: 'Produces chosen liquids (acid, oil, wine, honey, fresh water, mayonnaise) once per day.' },
+  { id: 'mag-gauntlets-ogre', name: 'Gauntlets of Ogre Power', rarity: 'Uncommon', category: 'Wondrous', attunement: true, priceGp: 500, merchantTypes: ['blacksmith', 'relic_peddler'], description: 'Your Strength score becomes 19 while you wear these gauntlets.' },
+  { id: 'mag-winged-boots', name: 'Winged Boots', rarity: 'Uncommon', category: 'Wondrous', attunement: true, priceGp: 600, merchantTypes: ['tailor', 'relic_peddler'], description: 'Gain a Flying Speed equal to your Walking Speed for up to 4 hours.' },
+
+  // RARE
+  { id: 'mag-flame-tongue', name: 'Flame Tongue Longsword', rarity: 'Rare', category: 'Weapon', attunement: true, priceGp: 2500, damageDice: '1d8+2d6', merchantTypes: ['blacksmith', 'relic_peddler'], description: 'Bonus Action to ignite the blade, dealing an extra 2d6 Fire damage on every hit and shedding 40ft bright light.' },
+  { id: 'mag-ring-protection', name: 'Ring of Protection', rarity: 'Rare', category: 'Ring', attunement: true, priceGp: 2000, acBonus: 1, merchantTypes: ['arcanist', 'fence', 'relic_peddler'], description: 'Gain a +1 bonus to Armor Class and all Saving Throws.' },
+  { id: 'mag-ring-spell-storing', name: 'Ring of Spell Storing', rarity: 'Rare', category: 'Ring', attunement: true, priceGp: 2800, merchantTypes: ['arcanist', 'relic_peddler'], description: 'Stores up to 5 levels worth of spells cast into it, allowing the wearer to cast them later.' },
+  { id: 'mag-cloak-displacement', name: 'Cloak of Displacement', rarity: 'Rare', category: 'Wondrous', attunement: true, priceGp: 2600, merchantTypes: ['tailor', 'fence', 'relic_peddler'], description: 'Projects an illusion causing attack rolls against you to have Disadvantage until you take damage this turn.' },
+  { id: 'mag-potion-superior-healing', name: 'Potion of Superior Healing', rarity: 'Rare', category: 'Potion', attunement: false, priceGp: 500, healDice: '8d4+8', merchantTypes: ['alchemist', 'relic_peddler'], description: 'Regain 8d4 + 8 Hit Points as a Bonus Action.' },
+  { id: 'mag-potion-invisibility', name: 'Potion of Invisibility', rarity: 'Rare', category: 'Potion', attunement: false, priceGp: 650, merchantTypes: ['alchemist', 'fence'], description: 'Become Invisible for 1 hour (ends early if you attack or cast a spell).' },
+  { id: 'mag-sun-blade', name: 'Sun Blade', rarity: 'Rare', category: 'Weapon', attunement: true, priceGp: 3200, damageDice: '1d8+2', merchantTypes: ['blacksmith', 'relic_peddler'], description: '+2 Finesse blade of pure radiance dealing Radiant damage (+1d8 extra vs. Undead).' },
+  { id: 'mag-wand-fireballs', name: 'Wand of Fireballs', rarity: 'Rare', category: 'Wand', attunement: true, priceGp: 2400, merchantTypes: ['arcanist', 'relic_peddler'], description: '7 charges. Cast Fireball (DC 15 DEX, 8d6 fire) by expending 1+ charges.' },
+  { id: 'mag-amulet-health', name: 'Amulet of Health', rarity: 'Rare', category: 'Wondrous', attunement: true, priceGp: 2500, merchantTypes: ['alchemist', 'arcanist', 'relic_peddler'], description: 'Your Constitution score becomes 19 while you wear this amulet.' },
+  { id: 'mag-armor-plus1', name: '+1 Mithral Half Plate', rarity: 'Rare', category: 'Armor', attunement: false, priceGp: 2200, baseAc: 16, armorType: 'medium', merchantTypes: ['blacksmith'], description: 'AC 16 + DEX (max 2). No Stealth disadvantage and no Strength requirement.' },
+
+  // VERY RARE
+  { id: 'mag-staff-power', name: 'Staff of Power', rarity: 'Very Rare', category: 'Staff', attunement: true, priceGp: 18000, acBonus: 2, merchantTypes: ['arcanist', 'relic_peddler'], description: '+2 AC, +2 Saves, +2 Spell Attack, 20 charges for Fireball, Lightning Bolt, Cone of Cold, Wall of Force.' },
+  { id: 'mag-belt-fire-giant', name: 'Belt of Fire Giant Strength', rarity: 'Very Rare', category: 'Wondrous', attunement: true, priceGp: 16000, merchantTypes: ['blacksmith', 'relic_peddler'], description: 'Your Strength score becomes 25 while wearing this forged iron belt.' },
+  { id: 'mag-robe-scintillating', name: 'Robe of Scintillating Colors', rarity: 'Very Rare', category: 'Wondrous', attunement: true, priceGp: 14000, merchantTypes: ['tailor', 'arcanist', 'relic_peddler'], description: '3 charges. Emit blinding prism light giving attackers Disadvantage and stunning nearby foes.' },
+  { id: 'mag-potion-supreme-healing', name: 'Potion of Supreme Healing', rarity: 'Very Rare', category: 'Potion', attunement: false, priceGp: 1500, healDice: '10d4+20', merchantTypes: ['alchemist', 'relic_peddler'], description: 'Regain 10d4 + 20 Hit Points as a Bonus Action.' },
+  { id: 'mag-oathbow', name: 'Oathbow', rarity: 'Very Rare', category: 'Weapon', attunement: true, priceGp: 12000, damageDice: '1d8+3d6', merchantTypes: ['blacksmith', 'fence', 'relic_peddler'], description: 'Swear an oath against a sworn enemy: Advantage on attacks and +3d6 piercing damage.' },
+  { id: 'mag-cloak-arachnida', name: 'Cloak of Arachnida', rarity: 'Very Rare', category: 'Wondrous', attunement: true, priceGp: 11000, merchantTypes: ['tailor', 'fence'], description: 'Poison resistance, Climb Speed equal to walking speed, walk on ceilings, cast Web.' },
+
+  // LEGENDARY & ARTIFACT
+  { id: 'mag-holy-avenger', name: 'Holy Avenger', rarity: 'Legendary', category: 'Weapon', attunement: true, priceGp: 50000, damageDice: '1d8+3', merchantTypes: ['relic_peddler'], description: '+3 Weapon; +2d10 Radiant damage vs. Fiends & Undead; 10ft aura grants Advantage on saves vs. spells.' },
+  { id: 'mag-cloak-invisibility', name: 'Cloak of Invisibility', rarity: 'Legendary', category: 'Wondrous', attunement: true, priceGp: 45000, merchantTypes: ['fence', 'relic_peddler'], description: 'Pull hood up to become Invisible for up to 2 hours even while attacking or casting spells.' },
+  { id: 'mag-robe-archmagi', name: 'Robe of the Archmagi', rarity: 'Legendary', category: 'Armor', attunement: true, priceGp: 50000, baseAc: 15, armorType: 'light', merchantTypes: ['arcanist', 'tailor', 'relic_peddler'], description: 'AC 15 + DEX, Advantage on saves vs. spells, +2 Spell Save DC and Spell Attack bonus.' },
+  { id: 'mag-ring-three-wishes', name: 'Ring of Three Wishes', rarity: 'Legendary', category: 'Ring', attunement: false, priceGp: 75000, merchantTypes: ['relic_peddler'], description: 'Contains 3 charges to cast the Wish spell and reshape reality itself.' },
+  { id: 'mag-vorpal-sword', name: 'Vorpal Greatsword', rarity: 'Legendary', category: 'Weapon', attunement: true, priceGp: 60000, damageDice: '2d6+3', merchantTypes: ['blacksmith', 'relic_peddler'], description: '+3 Weapon; ignores Slashing resistance; rolling a natural 20 severs a foe\'s head (or deals +6d8 slashing).' },
+  { id: 'mag-eye-aetheria', name: 'Heart of the Bleeding Crucible', rarity: 'Artifact', category: 'Wondrous', attunement: true, priceGp: 100000, acBonus: 2, merchantTypes: ['relic_peddler'], description: 'Mythic Aetheria Artifact: +2 AC, resistance to Fire & Cold, and once per dawn unleash an Elemental Nova (60ft radius).' }
+];
+
   // 1.5. SUPABASE CLIENT
 /**
  * Supabase Database & Realtime Sync Client for The Bleeding Realms of Aetheria
@@ -1891,6 +2056,24 @@ class SupabaseCampaignService {
     const { error } = await this.client
       .from('campaigns')
       .update({ faction_reputation: reputation, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveActiveVendor(campaignId, activeVendor) {
+    if (!this.isAvailable() || !activeVendor) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ active_vendor: activeVendor, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveCustomMagicItems(campaignId, customMagicItems) {
+    if (!this.isAvailable() || !Array.isArray(customMagicItems)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ custom_magic_items: customMagicItems, updated_at: new Date().toISOString() })
       .eq('id', campaignId || 'demo');
     return error ? { success: false, error: error.message } : { success: true };
   }
@@ -2553,7 +2736,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '2.0';
+    this.version = '2.1';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -4564,7 +4747,7 @@ class WorldStateManager {
     const activeQuests = (this.data.campaignQuests || []).filter(q => q.status === 'active').length;
     const alliedFactions = (this.data.factions || []).filter(f => (f.playerStanding || 0) >= 2).length;
     return {
-      version: this.version || '2.0',
+      version: this.version || '2.1',
       heroCount: heroes.length,
       avgLevel,
       activeQuests,
@@ -4573,6 +4756,301 @@ class WorldStateManager {
       chatCount: (this.data.campaignChat || []).length,
       aoeCount: this.getAoeTemplates().length
     };
+  }
+
+  // ==========================================
+  // v2.1: MAGIC ITEM COMPENDIUM & DM AWARD SYSTEM (SUPABASE)
+  // ==========================================
+  getMagicCompendium({ search = '', rarity = 'all', category = 'all', attunement = 'all' } = {}) {
+    const base = (typeof MAGIC_ITEM_COMPENDIUM !== 'undefined' && Array.isArray(MAGIC_ITEM_COMPENDIUM)) ? MAGIC_ITEM_COMPENDIUM : [];
+    const custom = Array.isArray(this.data.customMagicItems) ? this.data.customMagicItems : [];
+    const merged = [...custom, ...base];
+    const q = String(search || '').trim().toLowerCase();
+    return merged.filter(item => {
+      if (rarity !== 'all' && String(item.rarity || '').toLowerCase() !== String(rarity).toLowerCase()) return false;
+      if (category !== 'all' && String(item.category || '').toLowerCase() !== String(category).toLowerCase()) return false;
+      if (attunement === 'yes' && !item.attunement) return false;
+      if (attunement === 'no' && item.attunement) return false;
+      if (q) {
+        const hay = `${item.name} ${item.rarity} ${item.category} ${item.description || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  async addCustomMagicItem(itemData = {}) {
+    if (!itemData.name || !String(itemData.name).trim()) return { success: false, error: 'Item name is required' };
+    if (!Array.isArray(this.data.customMagicItems)) this.data.customMagicItems = [];
+    const newItem = {
+      id: 'mag-custom-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      name: String(itemData.name).trim(),
+      rarity: itemData.rarity || 'Rare',
+      category: itemData.category || 'Wondrous',
+      attunement: Boolean(itemData.attunement),
+      priceGp: Math.max(1, parseInt(itemData.priceGp, 10) || 500),
+      acBonus: itemData.acBonus ? Number(itemData.acBonus) : undefined,
+      damageDice: itemData.damageDice || undefined,
+      healDice: itemData.healDice || undefined,
+      merchantTypes: Array.isArray(itemData.merchantTypes) && itemData.merchantTypes.length ? itemData.merchantTypes : ['relic_peddler', 'arcanist'],
+      description: String(itemData.description || 'Homebrew magic artifact crafted by the Dungeon Master.').trim(),
+      isHomebrew: true
+    };
+    this.data.customMagicItems.unshift(newItem);
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCustomMagicItems(this.activeGameId || 'demo', this.data.customMagicItems);
+    }
+    return { success: true, item: newItem };
+  }
+
+  awardMagicItemToHero(itemId, targetHeroId, dmNote = '') {
+    const allItems = this.getMagicCompendium();
+    const item = allItems.find(i => i.id === itemId);
+    const hero = (this.data.partyCharacters || []).find(c => c.id === targetHeroId);
+    if (!item) return { success: false, error: 'Magic item not found in compendium' };
+    if (!hero) return { success: false, error: 'Target hero not found' };
+
+    const invCategory = String(item.category || 'magic').toLowerCase();
+    const added = this.addInventoryItem(hero.id, {
+      name: item.name,
+      category: ['weapon', 'armor', 'potion', 'shield'].includes(invCategory) ? invCategory : 'magic',
+      rarity: item.rarity,
+      isMagic: true,
+      requiresAttunement: Boolean(item.attunement),
+      priceGp: item.priceGp || 100,
+      acBonus: item.acBonus || 0,
+      baseAc: item.baseAc || undefined,
+      armorType: item.armorType || undefined,
+      damageDice: item.damageDice || undefined,
+      healDice: item.healDice || undefined,
+      notes: item.description,
+      quantity: 1
+    });
+
+    this.logDiceRoll({
+      rollerName: 'Dungeon Master',
+      rollerAvatar: '🎁',
+      rollType: 'level_up',
+      label: `Awarded ${item.name} (${item.rarity}) → ${hero.name}`,
+      formula: item.attunement ? 'Requires Attunement' : 'No Attunement',
+      total: item.priceGp || 0,
+      note: dmNote || item.description
+    });
+    return { success: true, item: item.name, hero: hero.name, inventoryItem: added };
+  }
+
+  async awardMagicItemToLootChest(itemId, chestTitle = 'DM Magic Treasure Drop') {
+    const allItems = this.getMagicCompendium();
+    const item = allItems.find(i => i.id === itemId);
+    if (!item) return { success: false, error: 'Magic item not found' };
+    const res = await this.createLootChest({
+      title: chestTitle || `Treasure: ${item.name}`,
+      gold: 0,
+      items: [{
+        name: item.name,
+        category: String(item.category || 'magic').toLowerCase(),
+        rarity: item.rarity,
+        isMagic: true,
+        requiresAttunement: Boolean(item.attunement),
+        priceGp: item.priceGp || 100,
+        acBonus: item.acBonus || 0,
+        healDice: item.healDice || undefined,
+        notes: item.description,
+        quantity: 1
+      }]
+    });
+    return { success: true, chest: (res && res.chest) ? res.chest : res };
+  }
+
+  // ==========================================
+  // v2.1: DYNAMIC ON-THE-FLY VENDOR & MERCHANT TAB (SUPABASE SYNCED)
+  // ==========================================
+  getMerchantArchetypes() {
+    return (typeof MERCHANT_ARCHETYPES !== 'undefined' && Array.isArray(MERCHANT_ARCHETYPES)) ? MERCHANT_ARCHETYPES : [];
+  }
+
+  _buildVendorStock(archetypeId, maxRarity = 'Rare', includeMagic = true) {
+    const rarityOrder = ['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
+    const maxIdx = Math.max(0, rarityOrder.indexOf(maxRarity));
+    const mundanePool = (typeof MUNDANE_VENDOR_CATALOG !== 'undefined' ? MUNDANE_VENDOR_CATALOG : [])
+      .filter(i => Array.isArray(i.merchantTypes) && i.merchantTypes.includes(archetypeId));
+    const magicPool = includeMagic
+      ? this.getMagicCompendium().filter(i => {
+          const rIdx = rarityOrder.indexOf(i.rarity || 'Common');
+          const matchesType = Array.isArray(i.merchantTypes) && i.merchantTypes.includes(archetypeId);
+          return matchesType && rIdx > 0 && rIdx <= maxIdx;
+        })
+      : [];
+
+    const items = [];
+    mundanePool.forEach(m => {
+      items.push({ ...m, isMagic: false, rarity: 'Mundane', stock: m.stock || 3 });
+    });
+    magicPool.forEach(mg => {
+      const rIdx = rarityOrder.indexOf(mg.rarity || 'Common');
+      const defaultStock = rIdx <= 1 ? 3 : (rIdx === 2 ? 2 : 1);
+      items.push({
+        id: mg.id,
+        name: mg.name,
+        category: String(mg.category || 'magic').toLowerCase(),
+        rarity: mg.rarity,
+        isMagic: true,
+        requiresAttunement: Boolean(mg.attunement),
+        priceGp: mg.priceGp || 100,
+        acBonus: mg.acBonus || 0,
+        baseAc: mg.baseAc || undefined,
+        armorType: mg.armorType || undefined,
+        damageDice: mg.damageDice || undefined,
+        healDice: mg.healDice || undefined,
+        notes: mg.description,
+        stock: defaultStock
+      });
+    });
+    return items;
+  }
+
+  getActiveVendor() {
+    if (!this.data.activeVendor || !this.data.activeVendor.archetypeId) {
+      const archetypes = this.getMerchantArchetypes();
+      const def = archetypes[0] || {
+        id: 'shopkeeper',
+        name: 'General Shopkeeper',
+        icon: '🏪',
+        defaultShopName: 'The Crossroads Outfitter',
+        defaultMerchantName: 'Bramwell Copperkettle',
+        greeting: '"Everything an adventurer needs!"',
+        defaultMaxRarity: 'Uncommon',
+        includeMagicDefault: true
+      };
+      this.data.activeVendor = {
+        archetypeId: def.id,
+        archetypeName: def.name,
+        icon: def.icon,
+        shopName: def.defaultShopName,
+        merchantName: def.defaultMerchantName,
+        greeting: def.greeting,
+        maxRarity: def.defaultMaxRarity || 'Uncommon',
+        includeMagic: def.includeMagicDefault !== false,
+        priceModifierPct: 0,
+        inventory: this._buildVendorStock(def.id, def.defaultMaxRarity || 'Uncommon', def.includeMagicDefault !== false),
+        updatedAt: Date.now()
+      };
+    }
+    return this.data.activeVendor;
+  }
+
+  async setVendorArchetype(archetypeId, opts = {}) {
+    const archetypes = this.getMerchantArchetypes();
+    const arch = archetypes.find(a => a.id === archetypeId) || archetypes[0];
+    if (!arch) return { success: false, error: 'Unknown merchant archetype' };
+    const maxRarity = opts.maxRarity || arch.defaultMaxRarity || 'Rare';
+    const includeMagic = opts.includeMagic !== undefined ? Boolean(opts.includeMagic) : (arch.includeMagicDefault !== false);
+    const priceModifierPct = opts.priceModifierPct !== undefined ? Number(opts.priceModifierPct) : 0;
+
+    this.data.activeVendor = {
+      archetypeId: arch.id,
+      archetypeName: arch.name,
+      icon: arch.icon,
+      shopName: opts.shopName || arch.defaultShopName,
+      merchantName: opts.merchantName || arch.defaultMerchantName,
+      greeting: opts.greeting || arch.greeting,
+      maxRarity,
+      includeMagic,
+      priceModifierPct,
+      inventory: this._buildVendorStock(arch.id, maxRarity, includeMagic),
+      updatedAt: Date.now()
+    };
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', this.data.activeVendor);
+    }
+    return { success: true, vendor: this.data.activeVendor };
+  }
+
+  async restockActiveVendor() {
+    const v = this.getActiveVendor();
+    v.inventory = this._buildVendorStock(v.archetypeId, v.maxRarity || 'Rare', v.includeMagic !== false);
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, vendor: v };
+  }
+
+  async addItemToActiveVendor(itemObj) {
+    const v = this.getActiveVendor();
+    if (!itemObj || !itemObj.name) return { success: false, error: 'Invalid item' };
+    v.inventory.unshift({
+      id: itemObj.id || ('vend-' + Date.now()),
+      name: itemObj.name,
+      category: String(itemObj.category || 'magic').toLowerCase(),
+      rarity: itemObj.rarity || (itemObj.isMagic ? 'Uncommon' : 'Mundane'),
+      isMagic: itemObj.isMagic !== undefined ? Boolean(itemObj.isMagic) : (itemObj.rarity && itemObj.rarity !== 'Mundane'),
+      requiresAttunement: Boolean(itemObj.attunement || itemObj.requiresAttunement),
+      priceGp: Math.max(1, parseInt(itemObj.priceGp, 10) || 50),
+      acBonus: itemObj.acBonus || 0,
+      damageDice: itemObj.damageDice || undefined,
+      healDice: itemObj.healDice || undefined,
+      notes: itemObj.description || itemObj.notes || '',
+      stock: Math.max(1, parseInt(itemObj.stock, 10) || 1)
+    });
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, vendor: v };
+  }
+
+  async removeItemFromActiveVendor(itemIndex) {
+    const v = this.getActiveVendor();
+    if (itemIndex < 0 || itemIndex >= v.inventory.length) return { success: false };
+    v.inventory.splice(itemIndex, 1);
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true };
+  }
+
+  getVendorEffectivePrice(basePriceGp) {
+    const v = this.getActiveVendor();
+    const vendorMod = Number(v.priceModifierPct) || 0;
+    const factionDisc = this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0;
+    const netMultiplier = Math.max(0.25, (1 + vendorMod / 100) * (1 - factionDisc / 100));
+    return Math.max(1, Math.round((Number(basePriceGp) || 1) * netMultiplier));
+  }
+
+  async buyFromActiveVendor(charId, itemIndex) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    const v = this.getActiveVendor();
+    const item = v.inventory[itemIndex];
+    if (!char || !item) return { success: false, error: 'Item unavailable' };
+    if ((item.stock || 0) <= 0) return { success: false, error: 'Sold out' };
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    const price = this.getVendorEffectivePrice(item.priceGp);
+    if ((char.currency.gp || 0) < price) {
+      return { success: false, error: `Not enough GP (need ${price} GP, have ${char.currency.gp || 0} GP).` };
+    }
+    char.currency.gp -= price;
+    item.stock -= 1;
+    this.addInventoryItem(char.id, { ...item, quantity: 1 });
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: v.icon || '🏪',
+      rollType: 'check',
+      label: `Purchased ${item.name} from ${v.merchantName}`,
+      formula: `${price} GP (${v.shopName})`,
+      total: price,
+      note: `Remaining GP: ${char.currency.gp} GP`
+    });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, item: item.name, paidGp: price, remainingGp: char.currency.gp };
   }
 
   togglePartyCondition(charId, conditionName) {
@@ -15361,6 +15839,407 @@ function executeStatRoll(statKey, isSave, skillName, hero, advMode = 'normal', d
   }
 }
 
+  // COMPONENT: compendiumView.js
+/**
+ * Magic Item Compendium & DM Award System (v2.1)
+ * Players can browse, search & filter all 5.5e magic items;
+ * DM can award any item directly to a Hero, drop to a Loot Chest, stock in the Active Vendor, or craft Homebrew items.
+ */
+let compSearch = '';
+let compRarity = 'all';
+let compCategory = 'all';
+let compAttunement = 'all';
+
+const RARITY_STYLES = {
+  Common: { bg: 'rgba(148,163,184,0.18)', border: '#94a3b8', color: '#cbd5e1' },
+  Uncommon: { bg: 'rgba(34,197,94,0.18)', border: '#22c55e', color: '#86efac' },
+  Rare: { bg: 'rgba(56,189,248,0.18)', border: '#38bdf8', color: '#7dd3fc' },
+  'Very Rare': { bg: 'rgba(168,85,247,0.2)', border: '#a855f7', color: '#d8b4fe' },
+  Legendary: { bg: 'rgba(245,158,11,0.22)', border: '#f59e0b', color: '#fde047' },
+  Artifact: { bg: 'rgba(239,68,68,0.22)', border: '#ef4444', color: '#fca5a5' }
+};
+function renderCompendiumView(container) {
+  const isDm = Boolean(worldState.prefs?.dmMode);
+  const heroes = worldState.data.partyCharacters || [];
+  const items = typeof worldState.getMagicCompendium === 'function'
+    ? worldState.getMagicCompendium({ search: compSearch, rarity: compRarity, category: compCategory, attunement: compAttunement })
+    : [];
+
+  container.innerHTML = `
+    <div class="view-header">
+      <div>
+        <h2>✨ Magic Item Compendium &amp; DM Vault</h2>
+        <div class="view-tagline">Browse official D&amp;D 5.5e &amp; homebrew magic items${isDm ? ' — DM Award System &amp; Vendor Stocking Active (Supabase Synced)' : ' — Inspect rarities, attunement &amp; properties'}</div>
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <span class="meta-badge" style="background: rgba(168,85,247,0.18); border-color: #a855f7; color: #d8b4fe;">${items.length} Magic Items</span>
+        ${isDm ? `<button type="button" class="btn btn-primary btn-sm" id="comp-add-homebrew-btn">+ Craft Homebrew Magic Item</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Filter & Search Bar -->
+    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;">
+      <input type="text" id="comp-search-input" class="editor-input" value="${compSearch}" placeholder="Search magic items by name, effect, or trait...">
+      <select id="comp-rarity-select" class="editor-input">
+        ${['all', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'].map(r => `<option value="${r}" ${compRarity === r ? 'selected' : ''}>${r === 'all' ? 'All Rarities' : r}</option>`).join('')}
+      </select>
+      <select id="comp-category-select" class="editor-input">
+        ${['all', 'Weapon', 'Armor', 'Wondrous', 'Potion', 'Ring', 'Staff', 'Wand', 'Scroll'].map(c => `<option value="${c}" ${compCategory === c ? 'selected' : ''}>${c === 'all' ? 'All Categories' : c}</option>`).join('')}
+      </select>
+      <select id="comp-attune-select" class="editor-input">
+        <option value="all" ${compAttunement === 'all' ? 'selected' : ''}>Attunement: Any</option>
+        <option value="yes" ${compAttunement === 'yes' ? 'selected' : ''}>Requires Attunement</option>
+        <option value="no" ${compAttunement === 'no' ? 'selected' : ''}>No Attunement</option>
+      </select>
+    </div>
+
+    ${isDm ? `
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; padding: 0.65rem 0.9rem; background: rgba(212,175,55,0.1); border: 1px solid rgba(212,175,55,0.45); border-radius: var(--radius-md); font-size: 0.82rem;">
+        <div><strong style="color: var(--text-gold);">🎁 DM Quick Award Target:</strong> Choose which hero receives awarded items below (synced to Supabase immediately).</div>
+        <select id="comp-dm-award-hero-select" class="editor-input" style="width: auto; font-size: 0.8rem; padding: 3px 8px;">
+          ${heroes.length ? heroes.map(h => `<option value="${h.id}">${h.name} (Lv ${h.level || 1} ${h.classRole || ''})</option>`).join('') : `<option value="">No Heroes in Party</option>`}
+        </select>
+      </div>
+    ` : ''}
+
+    <!-- Magic Item Cards Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.85rem;">
+      ${items.map(item => {
+        const rs = RARITY_STYLES[item.rarity] || RARITY_STYLES.Common;
+        return `
+          <div style="background: var(--bg-card); border: 1px solid ${rs.border}55; border-radius: var(--radius-md); padding: 0.85rem; display: flex; flex-direction: column; justify-content: space-between; gap: 0.55rem;">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.4rem;">
+                <strong style="font-size: 0.98rem; color: var(--text-primary);">${item.name}${item.isHomebrew ? ' <span style="font-size:0.65rem;color:#f472b6;">[HOMEBREW]</span>' : ''}</strong>
+                <span style="font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; background: ${rs.bg}; border: 1px solid ${rs.border}; color: ${rs.color}; white-space: nowrap;">${item.rarity}</span>
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <span>📦 ${item.category}</span>
+                <span>💰 ~${(item.priceGp || 0).toLocaleString()} GP</span>
+                ${item.attunement ? `<span style="color: #fbbf24;">✦ Requires Attunement</span>` : `<span>No Attunement</span>`}
+              </div>
+              <p style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.45; margin: 0.5rem 0 0;">${item.description}</p>
+            </div>
+
+            ${isDm ? `
+              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; border-top: 1px dashed var(--border-subtle); padding-top: 0.55rem;">
+                <button type="button" class="btn btn-sm btn-primary comp-award-hero-btn" data-id="${item.id}" style="font-size: 0.72rem; padding: 3px 8px; flex: 1;">🎁 Award to Hero</button>
+                <button type="button" class="btn btn-sm comp-drop-chest-btn" data-id="${item.id}" style="font-size: 0.72rem; padding: 3px 8px; border-color: #eab308; color: #fde047;" title="Drop into Party Loot Chest">💰 Chest</button>
+                <button type="button" class="btn btn-sm comp-stock-vendor-btn" data-id="${item.id}" style="font-size: 0.72rem; padding: 3px 8px; border-color: #10b981; color: #6ee7b7;" title="Stock in Active Vendor">🏪 Stock</button>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('') || `<div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: var(--text-muted);">No magic items match your current filters.</div>`}
+    </div>
+  `;
+
+  // Filter Events
+  container.querySelector('#comp-search-input')?.addEventListener('input', (e) => {
+    compSearch = e.target.value;
+    renderCompendiumView(container);
+    const inp = container.querySelector('#comp-search-input');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  });
+  container.querySelector('#comp-rarity-select')?.addEventListener('change', (e) => {
+    compRarity = e.target.value;
+    renderCompendiumView(container);
+  });
+  container.querySelector('#comp-category-select')?.addEventListener('change', (e) => {
+    compCategory = e.target.value;
+    renderCompendiumView(container);
+  });
+  container.querySelector('#comp-attune-select')?.addEventListener('change', (e) => {
+    compAttunement = e.target.value;
+    renderCompendiumView(container);
+  });
+
+  // DM Award & Homebrew Events
+  container.querySelector('#comp-add-homebrew-btn')?.addEventListener('click', async () => {
+    const name = prompt('Homebrew Magic Item Name:', 'Frostbite Signet');
+    if (!name) return;
+    const rarity = prompt('Rarity (Common / Uncommon / Rare / Very Rare / Legendary / Artifact):', 'Rare') || 'Rare';
+    const category = prompt('Category (Weapon / Armor / Wondrous / Potion / Ring / Staff / Wand / Scroll):', 'Ring') || 'Wondrous';
+    const priceGp = parseInt(prompt('Suggested Value (GP):', '1800') || '1800', 10);
+    const attunement = confirm('Does this item require Attunement?');
+    const description = prompt('Item Effects & Lore:', 'Grants resistance to Cold damage and lets you cast Ray of Frost at will.') || '';
+    await worldState.addCustomMagicItem({ name, rarity, category, priceGp, attunement, description });
+    if (soundEngine.playSfx) soundEngine.playSfx('fanfare');
+    renderCompendiumView(container);
+  });
+
+  container.querySelectorAll('.comp-award-hero-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const heroId = container.querySelector('#comp-dm-award-hero-select')?.value;
+      if (!heroId) { alert('No hero selected to award!'); return; }
+      const res = worldState.awardMagicItemToHero(btn.getAttribute('data-id'), heroId);
+      if (res.success) {
+        if (soundEngine.playSfx) soundEngine.playSfx('fanfare');
+        alert(`🎁 Awarded "${res.item}" directly to ${res.hero}'s inventory (synced to Supabase)!`);
+      } else {
+        alert(res.error || 'Could not award item.');
+      }
+    });
+  });
+
+  container.querySelectorAll('.comp-drop-chest-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const res = await worldState.awardMagicItemToLootChest(btn.getAttribute('data-id'));
+      if (res.success) {
+        if (soundEngine.playSfx) soundEngine.playSfx('spell');
+        alert(`💰 Dropped magic item into a new Party Loot Chest (Supabase)!`);
+      }
+    });
+  });
+
+  container.querySelectorAll('.comp-stock-vendor-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const item = worldState.getMagicCompendium().find(i => i.id === btn.getAttribute('data-id'));
+      if (!item) return;
+      const res = await worldState.addItemToActiveVendor(item);
+      if (res.success) {
+        alert(`🏪 Stocked "${item.name}" into ${res.vendor.shopName} (${res.vendor.merchantName})!`);
+      }
+    });
+  });
+}
+
+  // COMPONENT: vendorView.js
+/**
+ * Dynamic On-the-Fly Vendor & Merchant Tab (v2.1 — Supabase Synced)
+ * DM can switch merchant archetype ("alignment") on the fly: Alchemist, Blacksmith, Tailor,
+ * General Shopkeeper, Arcane Enchanter, Black Market Fence, or Traveling Relic Peddler.
+ */
+let vendorFilterType = 'all'; // 'all' | 'magic' | 'mundane'
+function renderVendorView(container) {
+  const isDm = Boolean(worldState.prefs?.dmMode);
+  const archetypes = typeof worldState.getMerchantArchetypes === 'function' ? worldState.getMerchantArchetypes() : [];
+  const vendor = typeof worldState.getActiveVendor === 'function' ? worldState.getActiveVendor() : { inventory: [] };
+  const heroes = worldState.data.partyCharacters || [];
+  const activeHero = (typeof worldState.getActiveHero === 'function' ? worldState.getActiveHero() : null) || heroes[0];
+  const factionDiscount = typeof worldState.getMerchantDiscountPercent === 'function' ? worldState.getMerchantDiscountPercent() : 0;
+
+  const filteredStock = (vendor.inventory || []).map((item, idx) => ({ item, idx })).filter(({ item }) => {
+    if (vendorFilterType === 'magic') return Boolean(item.isMagic);
+    if (vendorFilterType === 'mundane') return !item.isMagic;
+    return true;
+  });
+
+  container.innerHTML = `
+    <div class="view-header">
+      <div>
+        <h2>${vendor.icon || '🏪'} ${vendor.shopName || 'Town Market'}</h2>
+        <div class="view-tagline">
+          Proprietor: <strong>${vendor.merchantName || 'Merchant'}</strong> • Specialty: <span style="color: var(--text-gold); font-weight: 700;">${vendor.archetypeName || 'Shopkeeper'}</span>
+          ${factionDiscount > 0 ? ` • <span style="color: #6ee7b7; font-weight: 700;">Faction Standing Discount: −${factionDiscount}%</span>` : ''}
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <label for="vendor-buyer-select" style="font-size: 0.78rem; color: var(--text-muted);">Active Shopper:</label>
+        <select id="vendor-buyer-select" class="editor-input" style="width: auto; font-size: 0.8rem; padding: 3px 8px;">
+          ${heroes.length ? heroes.map(h => `<option value="${h.id}" ${activeHero && activeHero.id === h.id ? 'selected' : ''}>${h.name} (${h.currency?.gp ?? 50} GP)</option>`).join('') : `<option value="">No Hero</option>`}
+        </select>
+      </div>
+    </div>
+
+    <!-- Flavor Greeting Banner -->
+    <div style="background: rgba(212,175,55,0.08); border-left: 3px solid var(--text-gold); border-radius: var(--radius-sm); padding: 0.65rem 1rem; margin-bottom: 1rem; font-style: italic; color: var(--text-secondary); font-size: 0.88rem;">
+      ${vendor.greeting || '"Welcome, traveler! Browse my wares."'}
+    </div>
+
+    <!-- DM On-The-Fly Merchant Switcher Deck -->
+    ${isDm ? `
+      <div id="dm-vendor-control-deck" style="background: rgba(15, 23, 42, 0.82); border: 1px solid rgba(56,189,248,0.45); border-radius: var(--radius-md); padding: 0.85rem 1rem; margin-bottom: 1.15rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.65rem;">
+          <strong style="color: #7dd3fc; font-size: 0.9rem;">🎭 DM Live Merchant Switcher (Updates All Players via Supabase)</strong>
+          <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-sm" id="dm-vendor-restock-btn" style="border-color: #fde047; color: #fde047;">🎲 Restock Wares</button>
+            <button type="button" class="btn btn-sm" id="dm-vendor-add-custom-btn" style="border-color: #10b981; color: #6ee7b7;">+ Stock Custom Item</button>
+          </div>
+        </div>
+
+        <!-- Quick Archetype Alignment Pills -->
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.7rem;">
+          ${archetypes.map(a => `
+            <button type="button" class="btn btn-sm dm-vendor-arch-btn ${vendor.archetypeId === a.id ? 'btn-primary' : ''}" data-arch="${a.id}" style="font-size: 0.75rem; padding: 4px 10px;">
+              ${a.icon} ${a.name}
+            </button>
+          `).join('')}
+        </div>
+
+        <!-- Fine-Tune Rarity, Magic Toggle, Markup & Custom Name -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.5rem; font-size: 0.78rem;">
+          <div>
+            <label style="color: var(--text-muted); font-size: 0.7rem; display: block;">Shop Name</label>
+            <input type="text" id="dm-vendor-shop-name" class="editor-input" value="${vendor.shopName || ''}" style="font-size: 0.78rem; padding: 3px 7px;">
+          </div>
+          <div>
+            <label style="color: var(--text-muted); font-size: 0.7rem; display: block;">Merchant Name</label>
+            <input type="text" id="dm-vendor-merch-name" class="editor-input" value="${vendor.merchantName || ''}" style="font-size: 0.78rem; padding: 3px 7px;">
+          </div>
+          <div>
+            <label style="color: var(--text-muted); font-size: 0.7rem; display: block;">Max Magic Rarity</label>
+            <select id="dm-vendor-max-rarity" class="editor-input" style="font-size: 0.78rem; padding: 3px 7px;">
+              ${['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'].map(r => `<option value="${r}" ${vendor.maxRarity === r ? 'selected' : ''}>${r === 'Mundane' ? 'Mundane Only' : `Up to ${r}`}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label style="color: var(--text-muted); font-size: 0.7rem; display: block;">Price Markup / Discount (%)</label>
+            <input type="number" id="dm-vendor-price-mod" class="editor-input" value="${vendor.priceModifierPct || 0}" min="-50" max="100" step="5" style="font-size: 0.78rem; padding: 3px 7px;">
+          </div>
+          <div style="display: flex; align-items: flex-end;">
+            <button type="button" class="btn btn-sm btn-primary" id="dm-vendor-apply-btn" style="width: 100%; font-size: 0.78rem;">☁️ Apply &amp; Sync Shop</button>
+          </div>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Filter Chips: All / Magic / Non-Magic -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.85rem;">
+      <div style="display: flex; gap: 0.4rem;">
+        <button type="button" class="filter-chip vendor-filter-btn ${vendorFilterType === 'all' ? 'active' : ''}" data-filter="all">All Wares (${(vendor.inventory || []).length})</button>
+        <button type="button" class="filter-chip vendor-filter-btn ${vendorFilterType === 'magic' ? 'active' : ''}" data-filter="magic">✨ Magic Items (${(vendor.inventory || []).filter(i => i.isMagic).length})</button>
+        <button type="button" class="filter-chip vendor-filter-btn ${vendorFilterType === 'mundane' ? 'active' : ''}" data-filter="mundane">🎒 Non-Magic Gear (${(vendor.inventory || []).filter(i => !i.isMagic).length})</button>
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">
+        ${vendor.priceModifierPct ? `Merchant Price Modifier: <strong>${vendor.priceModifierPct > 0 ? '+' : ''}${vendor.priceModifierPct}%</strong>` : 'Standard Merchant Pricing'}
+      </div>
+    </div>
+
+    <!-- Vendor Stock Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(265px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem;">
+      ${filteredStock.map(({ item, idx }) => {
+        const effPrice = worldState.getVendorEffectivePrice(item.priceGp);
+        const outOfStock = (item.stock || 0) <= 0;
+        return `
+          <div style="background: var(--bg-card); border: 1px solid ${item.isMagic ? 'rgba(168,85,247,0.45)' : 'var(--border-subtle)'}; border-radius: var(--radius-md); padding: 0.75rem; display: flex; flex-direction: column; justify-content: space-between; gap: 0.45rem;">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.35rem;">
+                <strong style="color: ${item.isMagic ? '#e9d5ff' : 'var(--text-primary)'}; font-size: 0.92rem;">${item.isMagic ? '✨ ' : ''}${item.name}</strong>
+                <span style="color: var(--text-gold); font-weight: 800; font-size: 0.85rem; white-space: nowrap;">${effPrice.toLocaleString()} GP</span>
+              </div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                ${item.rarity || 'Mundane'} • ${item.category || 'gear'} • Stock: <strong>${item.stock ?? 0}</strong>${item.requiresAttunement ? ' • ✦ Attune' : ''}
+              </div>
+              ${item.notes ? `<div style="font-size: 0.76rem; color: var(--text-secondary); margin-top: 0.35rem; line-height: 1.4;">${item.notes}</div>` : ''}
+            </div>
+            <div style="display: flex; gap: 0.35rem; margin-top: 0.25rem;">
+              <button type="button" class="btn btn-sm vendor-buy-btn" data-idx="${idx}" ${outOfStock ? 'disabled' : ''} style="flex: 1; font-size: 0.74rem; border-color: #10b981; color: #6ee7b7; ${outOfStock ? 'opacity: 0.45; cursor: not-allowed;' : ''}">
+                ${outOfStock ? 'Sold Out' : `Buy (${effPrice.toLocaleString()} GP)`}
+              </button>
+              ${isDm ? `<button type="button" class="btn btn-sm vendor-remove-btn" data-idx="${idx}" title="DM: Remove item from shop" style="font-size: 0.72rem; border-color: #ef4444; color: #fca5a5;">✕</button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('') || `<div style="grid-column: 1 / -1; text-align: center; padding: 1.5rem; color: var(--text-muted);">No wares in this category.</div>`}
+    </div>
+
+    <!-- Quick Sell From Hero Pack Panel -->
+    ${activeHero && Array.isArray(activeHero.inventoryItems) && activeHero.inventoryItems.length > 0 ? `
+      <div style="background: var(--bg-card); border: 1px solid rgba(212,175,55,0.3); border-radius: var(--radius-md); padding: 0.85rem 1rem;">
+        <strong style="color: var(--text-gold); font-size: 0.88rem;">💰 Sell Gear from ${activeHero.name}'s Pack (50% GP Credit)</strong>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem;">
+          ${activeHero.inventoryItems.map(inv => {
+            const sellVal = Math.max(1, Math.floor((inv.priceGp || 20) / 2));
+            return `<button type="button" class="btn btn-sm vendor-sell-btn" data-item-id="${inv.id}" style="font-size: 0.72rem; border-color: #f59e0b; color: #fde047;">Sell ${inv.name} (+${sellVal} GP)</button>`;
+          }).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  // Buyer selector
+  container.querySelector('#vendor-buyer-select')?.addEventListener('change', (e) => {
+    worldState.setActiveHero(e.target.value);
+    renderVendorView(container);
+  });
+
+  // Filter chips
+  container.querySelectorAll('.vendor-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      vendorFilterType = btn.getAttribute('data-filter');
+      renderVendorView(container);
+    });
+  });
+
+  // DM Switch Archetype On-The-Fly
+  container.querySelectorAll('.dm-vendor-arch-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const archId = btn.getAttribute('data-arch');
+      await worldState.setVendorArchetype(archId);
+      if (soundEngine.playSfx) soundEngine.playSfx('fanfare');
+      renderVendorView(container);
+    });
+  });
+
+  // DM Apply Fine-Tuned Settings
+  container.querySelector('#dm-vendor-apply-btn')?.addEventListener('click', async () => {
+    const shopName = container.querySelector('#dm-vendor-shop-name')?.value.trim();
+    const merchantName = container.querySelector('#dm-vendor-merch-name')?.value.trim();
+    const maxRarity = container.querySelector('#dm-vendor-max-rarity')?.value || 'Rare';
+    const priceModifierPct = parseInt(container.querySelector('#dm-vendor-price-mod')?.value || '0', 10);
+    await worldState.setVendorArchetype(vendor.archetypeId, {
+      shopName,
+      merchantName,
+      maxRarity,
+      includeMagic: maxRarity !== 'Mundane',
+      priceModifierPct
+    });
+    renderVendorView(container);
+  });
+
+  // DM Restock
+  container.querySelector('#dm-vendor-restock-btn')?.addEventListener('click', async () => {
+    await worldState.restockActiveVendor();
+    renderVendorView(container);
+  });
+
+  // DM Stock Custom Item
+  container.querySelector('#dm-vendor-add-custom-btn')?.addEventListener('click', async () => {
+    const name = prompt('Item Name to Stock:', 'Elixir of Dragon Breath');
+    if (!name) return;
+    const priceGp = parseInt(prompt('Base Price (GP):', '250') || '250', 10);
+    const isMagic = confirm('Is this a Magic Item?');
+    const rarity = isMagic ? (prompt('Rarity (Common / Uncommon / Rare / Very Rare / Legendary):', 'Uncommon') || 'Uncommon') : 'Mundane';
+    const notes = prompt('Description / Effect:', 'Breathe a 15ft cone of fire (3d6) once within 1 hour.') || '';
+    await worldState.addItemToActiveVendor({ name, priceGp, isMagic, rarity, notes, stock: 1 });
+    renderVendorView(container);
+  });
+
+  // Buy from Active Vendor
+  container.querySelectorAll('.vendor-buy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const buyerId = container.querySelector('#vendor-buyer-select')?.value;
+      if (!buyerId) return;
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const res = await worldState.buyFromActiveVendor(buyerId, idx);
+      if (!res.success && res.error) alert(res.error);
+      else if (soundEngine.playDiceRoll) soundEngine.playDiceRoll(true);
+      renderVendorView(container);
+    });
+  });
+
+  // DM Remove Item
+  container.querySelectorAll('.vendor-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      await worldState.removeItemFromActiveVendor(idx);
+      renderVendorView(container);
+    });
+  });
+
+  // Sell from Pack
+  container.querySelectorAll('.vendor-sell-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!activeHero) return;
+      const itemId = btn.getAttribute('data-item-id');
+      worldState.sellInventoryItem(activeHero.id, itemId, 20);
+      if (soundEngine.playDiceRoll) soundEngine.playDiceRoll(false);
+      renderVendorView(container);
+    });
+  });
+}
+
   // COMPONENT: diceRoller.js
 /**
  * 5.5e Polyhedral Dice Roller Component with Sound Synthesis
@@ -15553,10 +16432,14 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '2.0';
+    window.APP_VERSION = '2.1';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;
+    window.renderCompendiumView = renderCompendiumView;
+    window.renderVendorView = renderVendorView;
+    window.MAGIC_ITEM_COMPENDIUM = MAGIC_ITEM_COMPENDIUM;
+    window.MERCHANT_ARCHETYPES = MERCHANT_ARCHETYPES;
     window.openLevelUpModal = openLevelUpModal;
     window.DND_LEVEL_UP_DATA = DND_LEVEL_UP_DATA;
     window.INVENTORY_CATALOG = INVENTORY_CATALOG;
@@ -15606,6 +16489,8 @@ const diceRoller = new DiceRollerModal();
       social: document.getElementById('view-social'),
       hero: document.getElementById('view-hero'),
       party: document.getElementById('view-party'),
+      vendors: document.getElementById('view-vendors'),
+      compendium: document.getElementById('view-compendium'),
       'create-hero': document.getElementById('view-create-hero'),
       pantheon: document.getElementById('view-pantheon'),
       characters: document.getElementById('view-characters'),
@@ -15638,6 +16523,8 @@ const diceRoller = new DiceRollerModal();
         case 'social': renderSocialView(container); break;
         case 'hero': if (typeof renderHeroView === 'function') renderHeroView(container); else if (typeof renderPlayerHeroView === 'function') renderPlayerHeroView(container); break;
         case 'party': renderPartyView(container); break;
+        case 'vendors': if (typeof renderVendorView === 'function') renderVendorView(container); break;
+        case 'compendium': if (typeof renderCompendiumView === 'function') renderCompendiumView(container); break;
         case 'create-hero': renderCharacterCreateView(container); break;
         case 'pantheon': renderPantheonView(container); break;
         case 'characters': renderCharacterView(container); break;

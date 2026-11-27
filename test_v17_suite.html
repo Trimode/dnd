@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>v2.0 Tests: Ruler/LoS/Walls, Handouts, Printable Sheet & Map Travel</title>
+  <title>v2.1 Tests: Ruler/LoS/Walls, Handouts, Printable Sheet & Map Travel</title>
   <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -12,7 +12,7 @@
   <div id="map-mount" style="display: none;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=2.0"></script>
+  <script src="js/bundle.js?v=2.1"></script>
 
   <script>
     (async function() {
@@ -85,12 +85,12 @@
         renderMapView(mapMount);
         assert(mapMount.querySelector('#world-map-party-token') !== null, "Live Party Token rendered on World Map SVG");
 
-        // 5. Verify v2.0 version badge
+        // 5. Verify v2.1 version badge
         const res = await fetch('index.html');
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v2.0', "Version indicator updated to v2.0");
+        assert(verEl && verEl.textContent.trim() === 'v2.1', "Version indicator updated to v2.1");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

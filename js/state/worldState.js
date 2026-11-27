@@ -9,7 +9,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '2.0';
+    this.version = '2.1';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -2020,7 +2020,7 @@ class WorldStateManager {
     const activeQuests = (this.data.campaignQuests || []).filter(q => q.status === 'active').length;
     const alliedFactions = (this.data.factions || []).filter(f => (f.playerStanding || 0) >= 2).length;
     return {
-      version: this.version || '2.0',
+      version: this.version || '2.1',
       heroCount: heroes.length,
       avgLevel,
       activeQuests,
@@ -2029,6 +2029,301 @@ class WorldStateManager {
       chatCount: (this.data.campaignChat || []).length,
       aoeCount: this.getAoeTemplates().length
     };
+  }
+
+  // ==========================================
+  // v2.1: MAGIC ITEM COMPENDIUM & DM AWARD SYSTEM (SUPABASE)
+  // ==========================================
+  getMagicCompendium({ search = '', rarity = 'all', category = 'all', attunement = 'all' } = {}) {
+    const base = (typeof MAGIC_ITEM_COMPENDIUM !== 'undefined' && Array.isArray(MAGIC_ITEM_COMPENDIUM)) ? MAGIC_ITEM_COMPENDIUM : [];
+    const custom = Array.isArray(this.data.customMagicItems) ? this.data.customMagicItems : [];
+    const merged = [...custom, ...base];
+    const q = String(search || '').trim().toLowerCase();
+    return merged.filter(item => {
+      if (rarity !== 'all' && String(item.rarity || '').toLowerCase() !== String(rarity).toLowerCase()) return false;
+      if (category !== 'all' && String(item.category || '').toLowerCase() !== String(category).toLowerCase()) return false;
+      if (attunement === 'yes' && !item.attunement) return false;
+      if (attunement === 'no' && item.attunement) return false;
+      if (q) {
+        const hay = `${item.name} ${item.rarity} ${item.category} ${item.description || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  async addCustomMagicItem(itemData = {}) {
+    if (!itemData.name || !String(itemData.name).trim()) return { success: false, error: 'Item name is required' };
+    if (!Array.isArray(this.data.customMagicItems)) this.data.customMagicItems = [];
+    const newItem = {
+      id: 'mag-custom-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      name: String(itemData.name).trim(),
+      rarity: itemData.rarity || 'Rare',
+      category: itemData.category || 'Wondrous',
+      attunement: Boolean(itemData.attunement),
+      priceGp: Math.max(1, parseInt(itemData.priceGp, 10) || 500),
+      acBonus: itemData.acBonus ? Number(itemData.acBonus) : undefined,
+      damageDice: itemData.damageDice || undefined,
+      healDice: itemData.healDice || undefined,
+      merchantTypes: Array.isArray(itemData.merchantTypes) && itemData.merchantTypes.length ? itemData.merchantTypes : ['relic_peddler', 'arcanist'],
+      description: String(itemData.description || 'Homebrew magic artifact crafted by the Dungeon Master.').trim(),
+      isHomebrew: true
+    };
+    this.data.customMagicItems.unshift(newItem);
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveCustomMagicItems(this.activeGameId || 'demo', this.data.customMagicItems);
+    }
+    return { success: true, item: newItem };
+  }
+
+  awardMagicItemToHero(itemId, targetHeroId, dmNote = '') {
+    const allItems = this.getMagicCompendium();
+    const item = allItems.find(i => i.id === itemId);
+    const hero = (this.data.partyCharacters || []).find(c => c.id === targetHeroId);
+    if (!item) return { success: false, error: 'Magic item not found in compendium' };
+    if (!hero) return { success: false, error: 'Target hero not found' };
+
+    const invCategory = String(item.category || 'magic').toLowerCase();
+    const added = this.addInventoryItem(hero.id, {
+      name: item.name,
+      category: ['weapon', 'armor', 'potion', 'shield'].includes(invCategory) ? invCategory : 'magic',
+      rarity: item.rarity,
+      isMagic: true,
+      requiresAttunement: Boolean(item.attunement),
+      priceGp: item.priceGp || 100,
+      acBonus: item.acBonus || 0,
+      baseAc: item.baseAc || undefined,
+      armorType: item.armorType || undefined,
+      damageDice: item.damageDice || undefined,
+      healDice: item.healDice || undefined,
+      notes: item.description,
+      quantity: 1
+    });
+
+    this.logDiceRoll({
+      rollerName: 'Dungeon Master',
+      rollerAvatar: '🎁',
+      rollType: 'level_up',
+      label: `Awarded ${item.name} (${item.rarity}) → ${hero.name}`,
+      formula: item.attunement ? 'Requires Attunement' : 'No Attunement',
+      total: item.priceGp || 0,
+      note: dmNote || item.description
+    });
+    return { success: true, item: item.name, hero: hero.name, inventoryItem: added };
+  }
+
+  async awardMagicItemToLootChest(itemId, chestTitle = 'DM Magic Treasure Drop') {
+    const allItems = this.getMagicCompendium();
+    const item = allItems.find(i => i.id === itemId);
+    if (!item) return { success: false, error: 'Magic item not found' };
+    const res = await this.createLootChest({
+      title: chestTitle || `Treasure: ${item.name}`,
+      gold: 0,
+      items: [{
+        name: item.name,
+        category: String(item.category || 'magic').toLowerCase(),
+        rarity: item.rarity,
+        isMagic: true,
+        requiresAttunement: Boolean(item.attunement),
+        priceGp: item.priceGp || 100,
+        acBonus: item.acBonus || 0,
+        healDice: item.healDice || undefined,
+        notes: item.description,
+        quantity: 1
+      }]
+    });
+    return { success: true, chest: (res && res.chest) ? res.chest : res };
+  }
+
+  // ==========================================
+  // v2.1: DYNAMIC ON-THE-FLY VENDOR & MERCHANT TAB (SUPABASE SYNCED)
+  // ==========================================
+  getMerchantArchetypes() {
+    return (typeof MERCHANT_ARCHETYPES !== 'undefined' && Array.isArray(MERCHANT_ARCHETYPES)) ? MERCHANT_ARCHETYPES : [];
+  }
+
+  _buildVendorStock(archetypeId, maxRarity = 'Rare', includeMagic = true) {
+    const rarityOrder = ['Mundane', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'];
+    const maxIdx = Math.max(0, rarityOrder.indexOf(maxRarity));
+    const mundanePool = (typeof MUNDANE_VENDOR_CATALOG !== 'undefined' ? MUNDANE_VENDOR_CATALOG : [])
+      .filter(i => Array.isArray(i.merchantTypes) && i.merchantTypes.includes(archetypeId));
+    const magicPool = includeMagic
+      ? this.getMagicCompendium().filter(i => {
+          const rIdx = rarityOrder.indexOf(i.rarity || 'Common');
+          const matchesType = Array.isArray(i.merchantTypes) && i.merchantTypes.includes(archetypeId);
+          return matchesType && rIdx > 0 && rIdx <= maxIdx;
+        })
+      : [];
+
+    const items = [];
+    mundanePool.forEach(m => {
+      items.push({ ...m, isMagic: false, rarity: 'Mundane', stock: m.stock || 3 });
+    });
+    magicPool.forEach(mg => {
+      const rIdx = rarityOrder.indexOf(mg.rarity || 'Common');
+      const defaultStock = rIdx <= 1 ? 3 : (rIdx === 2 ? 2 : 1);
+      items.push({
+        id: mg.id,
+        name: mg.name,
+        category: String(mg.category || 'magic').toLowerCase(),
+        rarity: mg.rarity,
+        isMagic: true,
+        requiresAttunement: Boolean(mg.attunement),
+        priceGp: mg.priceGp || 100,
+        acBonus: mg.acBonus || 0,
+        baseAc: mg.baseAc || undefined,
+        armorType: mg.armorType || undefined,
+        damageDice: mg.damageDice || undefined,
+        healDice: mg.healDice || undefined,
+        notes: mg.description,
+        stock: defaultStock
+      });
+    });
+    return items;
+  }
+
+  getActiveVendor() {
+    if (!this.data.activeVendor || !this.data.activeVendor.archetypeId) {
+      const archetypes = this.getMerchantArchetypes();
+      const def = archetypes[0] || {
+        id: 'shopkeeper',
+        name: 'General Shopkeeper',
+        icon: '🏪',
+        defaultShopName: 'The Crossroads Outfitter',
+        defaultMerchantName: 'Bramwell Copperkettle',
+        greeting: '"Everything an adventurer needs!"',
+        defaultMaxRarity: 'Uncommon',
+        includeMagicDefault: true
+      };
+      this.data.activeVendor = {
+        archetypeId: def.id,
+        archetypeName: def.name,
+        icon: def.icon,
+        shopName: def.defaultShopName,
+        merchantName: def.defaultMerchantName,
+        greeting: def.greeting,
+        maxRarity: def.defaultMaxRarity || 'Uncommon',
+        includeMagic: def.includeMagicDefault !== false,
+        priceModifierPct: 0,
+        inventory: this._buildVendorStock(def.id, def.defaultMaxRarity || 'Uncommon', def.includeMagicDefault !== false),
+        updatedAt: Date.now()
+      };
+    }
+    return this.data.activeVendor;
+  }
+
+  async setVendorArchetype(archetypeId, opts = {}) {
+    const archetypes = this.getMerchantArchetypes();
+    const arch = archetypes.find(a => a.id === archetypeId) || archetypes[0];
+    if (!arch) return { success: false, error: 'Unknown merchant archetype' };
+    const maxRarity = opts.maxRarity || arch.defaultMaxRarity || 'Rare';
+    const includeMagic = opts.includeMagic !== undefined ? Boolean(opts.includeMagic) : (arch.includeMagicDefault !== false);
+    const priceModifierPct = opts.priceModifierPct !== undefined ? Number(opts.priceModifierPct) : 0;
+
+    this.data.activeVendor = {
+      archetypeId: arch.id,
+      archetypeName: arch.name,
+      icon: arch.icon,
+      shopName: opts.shopName || arch.defaultShopName,
+      merchantName: opts.merchantName || arch.defaultMerchantName,
+      greeting: opts.greeting || arch.greeting,
+      maxRarity,
+      includeMagic,
+      priceModifierPct,
+      inventory: this._buildVendorStock(arch.id, maxRarity, includeMagic),
+      updatedAt: Date.now()
+    };
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', this.data.activeVendor);
+    }
+    return { success: true, vendor: this.data.activeVendor };
+  }
+
+  async restockActiveVendor() {
+    const v = this.getActiveVendor();
+    v.inventory = this._buildVendorStock(v.archetypeId, v.maxRarity || 'Rare', v.includeMagic !== false);
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, vendor: v };
+  }
+
+  async addItemToActiveVendor(itemObj) {
+    const v = this.getActiveVendor();
+    if (!itemObj || !itemObj.name) return { success: false, error: 'Invalid item' };
+    v.inventory.unshift({
+      id: itemObj.id || ('vend-' + Date.now()),
+      name: itemObj.name,
+      category: String(itemObj.category || 'magic').toLowerCase(),
+      rarity: itemObj.rarity || (itemObj.isMagic ? 'Uncommon' : 'Mundane'),
+      isMagic: itemObj.isMagic !== undefined ? Boolean(itemObj.isMagic) : (itemObj.rarity && itemObj.rarity !== 'Mundane'),
+      requiresAttunement: Boolean(itemObj.attunement || itemObj.requiresAttunement),
+      priceGp: Math.max(1, parseInt(itemObj.priceGp, 10) || 50),
+      acBonus: itemObj.acBonus || 0,
+      damageDice: itemObj.damageDice || undefined,
+      healDice: itemObj.healDice || undefined,
+      notes: itemObj.description || itemObj.notes || '',
+      stock: Math.max(1, parseInt(itemObj.stock, 10) || 1)
+    });
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, vendor: v };
+  }
+
+  async removeItemFromActiveVendor(itemIndex) {
+    const v = this.getActiveVendor();
+    if (itemIndex < 0 || itemIndex >= v.inventory.length) return { success: false };
+    v.inventory.splice(itemIndex, 1);
+    v.updatedAt = Date.now();
+    this.saveData();
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true };
+  }
+
+  getVendorEffectivePrice(basePriceGp) {
+    const v = this.getActiveVendor();
+    const vendorMod = Number(v.priceModifierPct) || 0;
+    const factionDisc = this.getMerchantDiscountPercent ? this.getMerchantDiscountPercent() : 0;
+    const netMultiplier = Math.max(0.25, (1 + vendorMod / 100) * (1 - factionDisc / 100));
+    return Math.max(1, Math.round((Number(basePriceGp) || 1) * netMultiplier));
+  }
+
+  async buyFromActiveVendor(charId, itemIndex) {
+    const char = (this.data.partyCharacters || []).find(c => c.id === charId);
+    const v = this.getActiveVendor();
+    const item = v.inventory[itemIndex];
+    if (!char || !item) return { success: false, error: 'Item unavailable' };
+    if ((item.stock || 0) <= 0) return { success: false, error: 'Sold out' };
+    if (!char.currency) char.currency = { gp: 50, sp: 0, cp: 0 };
+    const price = this.getVendorEffectivePrice(item.priceGp);
+    if ((char.currency.gp || 0) < price) {
+      return { success: false, error: `Not enough GP (need ${price} GP, have ${char.currency.gp || 0} GP).` };
+    }
+    char.currency.gp -= price;
+    item.stock -= 1;
+    this.addInventoryItem(char.id, { ...item, quantity: 1 });
+    this.logDiceRoll({
+      rollerName: char.name,
+      rollerAvatar: v.icon || '🏪',
+      rollType: 'check',
+      label: `Purchased ${item.name} from ${v.merchantName}`,
+      formula: `${price} GP (${v.shopName})`,
+      total: price,
+      note: `Remaining GP: ${char.currency.gp} GP`
+    });
+    if (typeof supabaseDb !== 'undefined' && supabaseDb.isAvailable()) {
+      await supabaseDb.saveActiveVendor(this.activeGameId || 'demo', v);
+    }
+    return { success: true, item: item.name, paidGp: price, remainingGp: char.currency.gp };
   }
 
   togglePartyCondition(charId, conditionName) {

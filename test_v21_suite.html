@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>v2.1 Tests: Magic Item Compendium, DM Award System & Dynamic On-the-Fly Vendor Tab</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=2.1"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      try {
+        worldState.setDmMode(true);
+        (worldState.data.factions || []).forEach(f => { f.playerStanding = 0; });
+
+        // 1. Magic Item Compendium browsing & filtering
+        const allMagic = worldState.getMagicCompendium();
+        assert(allMagic.length >= 35, "Magic Item Compendium loaded with " + allMagic.length + " D&D 5.5e magic items");
+
+        const legendaries = worldState.getMagicCompendium({ rarity: 'Legendary' });
+        assert(legendaries.length >= 4 && legendaries.every(i => i.rarity === 'Legendary'), "Rarity filter returns Legendary items accurately");
+
+        const searchFlame = worldState.getMagicCompendium({ search: 'Flame Tongue' });
+        assert(searchFlame.length >= 1 && searchFlame[0].name.includes('Flame Tongue'), "Search filter finds Flame Tongue Longsword");
+
+        // 2. DM Craft Homebrew Magic Item & DM Award System
+        const hbRes = await worldState.addCustomMagicItem({
+          name: 'Aetherian Frostblade',
+          rarity: 'Very Rare',
+          category: 'Weapon',
+          attunement: true,
+          priceGp: 15000,
+          description: '+2 blade dealing extra 1d8 Cold damage.'
+        });
+        assert(hbRes.success && worldState.getMagicCompendium({ search: 'Aetherian Frostblade' }).length === 1, "DM crafted homebrew magic item appears in Compendium");
+
+        const hero = worldState.createPartyCharacter({
+          name: 'Theron Vanguard',
+          level: 6,
+          species: 'Human',
+          classRole: 'Paladin',
+          hitDie: 10,
+          hpMax: 58
+        });
+        const awardRes = worldState.awardMagicItemToHero('mag-flame-tongue', hero.id, 'Slaying the Ember Wyrm');
+        assert(awardRes.success && hero.inventoryItems.some(i => i.name === 'Flame Tongue Longsword'), "DM Award System grants Flame Tongue directly to hero inventory");
+
+        const chestRes = await worldState.awardMagicItemToLootChest('mag-cloak-protection', 'Vault Reward');
+        assert(chestRes.success && chestRes.chest && chestRes.chest.items[0].name === 'Cloak of Protection', "DM can drop Compendium magic item directly into Party Loot Chest");
+
+        // 3. Dynamic On-The-Fly Vendor Tab (Merchant Archetypes / Alignments)
+        const archetypes = worldState.getMerchantArchetypes();
+        assert(archetypes.length >= 7, "All 7 Merchant Archetypes defined (Shopkeeper, Alchemist, Blacksmith, Tailor, Arcanist, Fence, Relic Peddler)");
+
+        // Switch to Alchemist
+        const alchRes = await worldState.setVendorArchetype('alchemist');
+        assert(alchRes.success && alchRes.vendor.archetypeId === 'alchemist', "DM switched active vendor on the fly to Alchemist");
+        assert(alchRes.vendor.inventory.some(i => i.isMagic && i.name.includes('Potion')), "Alchemist stocks magic potions");
+        assert(alchRes.vendor.inventory.some(i => !i.isMagic && i.name.includes('Antitoxin')), "Alchemist stocks non-magic alchemical wares");
+
+        // Switch to Blacksmith
+        const smithRes = await worldState.setVendorArchetype('blacksmith', { maxRarity: 'Rare', priceModifierPct: 10 });
+        assert(smithRes.success && smithRes.vendor.archetypeId === 'blacksmith' && smithRes.vendor.priceModifierPct === 10, "DM switched active vendor to Blacksmith with +10% markup");
+        assert(smithRes.vendor.inventory.some(i => !i.isMagic && i.category === 'armor') && smithRes.vendor.inventory.some(i => i.isMagic && i.category === 'weapon'), "Blacksmith stocks both mundane armor and magic weapons");
+
+        // Switch to Tailor (Mundane Only vs Magic)
+        const tailorRes = await worldState.setVendorArchetype('tailor', { maxRarity: 'Mundane', includeMagic: false });
+        assert(tailorRes.success && tailorRes.vendor.inventory.every(i => !i.isMagic) && tailorRes.vendor.inventory.length >= 3, "Tailor with Mundane Only toggle stocks strictly non-magic garments");
+
+        // Switch back to Tailor with Magic & test Purchase
+        await worldState.setVendorArchetype('tailor', { maxRarity: 'Uncommon', includeMagic: true, priceModifierPct: 0 });
+        hero.currency = { gp: 1000, sp: 0, cp: 0 };
+        const cloakIdx = worldState.getActiveVendor().inventory.findIndex(i => i.name === 'Cloak of Protection');
+        assert(cloakIdx !== -1, "Tailor (Uncommon) stocks Cloak of Protection");
+        const buyRes = await worldState.buyFromActiveVendor(hero.id, cloakIdx);
+        assert(buyRes.success && buyRes.paidGp === 500 && hero.currency.gp === 500, "Hero purchased Cloak of Protection from Tailor for 500 GP");
+        assert(hero.inventoryItems.some(i => i.name === 'Cloak of Protection'), "Purchased magic cloak added to hero inventory");
+
+        // 4. Verify v2.1 version badge
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v2.1', "Version indicator updated to v2.1");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V2.1 SUITE TESTS PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

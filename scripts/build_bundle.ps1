@@ -30,6 +30,12 @@ $dataCode = $dataCode -replace 'const worldData =', 'const INITIAL_WORLD_DATA ='
 [void]$sb.AppendLine("  const worldData = INITIAL_WORLD_DATA;")
 [void]$sb.AppendLine("")
 
+# 1.25. Magic Compendium & Merchant Archetypes Data
+[void]$sb.AppendLine("  // 1.25. MAGIC COMPENDIUM & MERCHANT ARCHETYPES")
+$magDataCode = Get-CleanModule "$root\data\magicCompendiumData.js"
+[void]$sb.AppendLine($magDataCode)
+[void]$sb.AppendLine("")
+
 # 1.5. Supabase Client
 [void]$sb.AppendLine("  // 1.5. SUPABASE CLIENT")
 $sbCode = Get-CleanModule "$root\state\supabaseClient.js"
@@ -67,6 +73,8 @@ $views = @(
     "characterCreateView.js",
     "combatView.js",
     "socialView.js",
+    "compendiumView.js",
+    "vendorView.js",
     "diceRoller.js"
 )
 
@@ -88,6 +96,10 @@ $appVer = if ($vMatch.Success) { $vMatch.Groups[1].Value } else { "0.6" }
 [void]$sb.AppendLine("    window.renderMapView = renderMapView;")
 [void]$sb.AppendLine("    window.renderCombatView = renderCombatView;")
 [void]$sb.AppendLine("    window.renderCharacterCreateView = renderCharacterCreateView;")
+[void]$sb.AppendLine("    window.renderCompendiumView = renderCompendiumView;")
+[void]$sb.AppendLine("    window.renderVendorView = renderVendorView;")
+[void]$sb.AppendLine("    window.MAGIC_ITEM_COMPENDIUM = MAGIC_ITEM_COMPENDIUM;")
+[void]$sb.AppendLine("    window.MERCHANT_ARCHETYPES = MERCHANT_ARCHETYPES;")
 [void]$sb.AppendLine("    window.openLevelUpModal = openLevelUpModal;")
 [void]$sb.AppendLine("    window.DND_LEVEL_UP_DATA = DND_LEVEL_UP_DATA;")
 [void]$sb.AppendLine("    window.INVENTORY_CATALOG = INVENTORY_CATALOG;")

@@ -497,6 +497,24 @@ class SupabaseCampaignService {
     return error ? { success: false, error: error.message } : { success: true };
   }
 
+  async saveActiveVendor(campaignId, activeVendor) {
+    if (!this.isAvailable() || !activeVendor) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ active_vendor: activeVendor, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
+  async saveCustomMagicItems(campaignId, customMagicItems) {
+    if (!this.isAvailable() || !Array.isArray(customMagicItems)) return { success: false };
+    const { error } = await this.client
+      .from('campaigns')
+      .update({ custom_magic_items: customMagicItems, updated_at: new Date().toISOString() })
+      .eq('id', campaignId || 'demo');
+    return error ? { success: false, error: error.message } : { success: true };
+  }
+
   async fetchCampaignChat(campaignId) {
     if (!this.isAvailable()) return null;
     const { data, error } = await this.client

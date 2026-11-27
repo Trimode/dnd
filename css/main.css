@@ -135,7 +135,9 @@
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .search-trigger-btn {
@@ -181,18 +183,22 @@
   border-color: var(--border-strong);
 }
 
-/* Audio toggle button */
+/* Audio / Dice / A11y icon & compact text buttons */
 .icon-btn {
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
-  width: 38px;
+  width: auto;
+  min-width: 38px;
   height: 38px;
+  padding: 0 0.65rem;
   border-radius: var(--radius-md);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.1rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: var(--transition-fast);
 }
 .icon-btn:hover, .icon-btn.active {
@@ -245,42 +251,42 @@
   box-shadow: 0 0 8px #f44336;
 }
 
-/* Navigation Bar */
+/* Navigation Bar — Clean Multi-Row Wrap (No Clipping or Horizontal Spillover) */
 .main-nav {
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
-  gap: 0.25rem;
-  padding: 0 1.5rem;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.main-nav::-webkit-scrollbar {
-  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.3rem;
+  padding: 0.35rem 1.25rem;
+  overflow-x: hidden;
 }
 
 .nav-tab-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  padding: 0.75rem 1.1rem;
-  font-size: 0.95rem;
+  padding: 0.45rem 0.72rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
   white-space: nowrap;
   transition: var(--transition-fast);
 }
 .nav-tab-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-subtle);
 }
 .nav-tab-btn.active {
   color: var(--text-gold);
   border-bottom-color: var(--text-gold);
-  background: rgba(212, 175, 55, 0.05);
+  background: rgba(212, 175, 55, 0.08);
 }
 
 /* Main Content Area */

@@ -2736,7 +2736,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '2.2';
+    this.version = '2.3';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -16477,7 +16477,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '2.2';
+    window.APP_VERSION = '2.3';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;

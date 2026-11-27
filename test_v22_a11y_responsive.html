@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>v2.2 Accessibility (WCAG AA) & Mobile/Tablet Responsive Audit</title>
+  <title>v2.3 Accessibility (WCAG AA) & Mobile/Tablet Responsive Audit</title>
   <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/responsive.css">
@@ -12,7 +12,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=2.2"></script>
+  <script src="js/bundle.js?v=2.3"></script>
 
   <script>
     (async function() {
@@ -92,12 +92,15 @@
         assert(cssText.includes('prefers-reduced-motion: reduce'), "OS prefers-reduced-motion accessibility rule defined");
         assert(cssText.includes(':focus-visible'), "Crisp :focus-visible keyboard focus outlines defined");
 
-        // 6. Zero Horizontal Overflow Check at Current Viewport
+        // 6. Zero Horizontal Overflow Check & Navbar Non-Spillover Check
         assert(document.documentElement.scrollWidth <= window.innerWidth + 1, "No horizontal overflow detected (scrollWidth=" + document.documentElement.scrollWidth + ", innerWidth=" + window.innerWidth + ")");
+        const mainCssRes = await fetch('css/main.css');
+        const mainCssText = await mainCssRes.text();
+        assert(mainCssText.includes('flex-wrap: wrap') && mainCssText.includes('width: auto'), "Navbar wraps cleanly (no horizontal spillover) and header icon buttons auto-size to text");
 
-        // 7. Verify v2.2 version badge
+        // 7. Verify v2.3 version badge
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v2.2', "Version indicator updated to v2.2");
+        assert(verEl && verEl.textContent.trim() === 'v2.3', "Version indicator updated to v2.3");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

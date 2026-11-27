@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>v2.2 Tests: Spell Slots, Tabletop Soundboard, Faction Reputation Discounts & Private Whispers</title>
+  <title>v2.3 Tests: Spell Slots, Tabletop Soundboard, Faction Reputation Discounts & Private Whispers</title>
   <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -10,7 +10,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=2.2"></script>
+  <script src="js/bundle.js?v=2.3"></script>
 
   <script>
     (async function() {
@@ -96,12 +96,12 @@
         assert(!otherPlayerFeed.some(m => m.id === whispRes.entry.id), "Private whisper is hidden from other players");
         assert(dmFeed.some(m => m.id === whispRes.entry.id), "Private whisper is visible to the DM");
 
-        // 6. Verify v2.2 version badge
+        // 6. Verify v2.3 version badge
         const res = await fetch('index.html');
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v2.2', "Version indicator updated to v2.2");
+        assert(verEl && verEl.textContent.trim() === 'v2.3', "Version indicator updated to v2.3");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

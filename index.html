@@ -20,15 +20,18 @@
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/map.css">
   <link rel="stylesheet" href="css/combat.css">
+  <link rel="stylesheet" href="css/responsive.css">
 </head>
 <body>
+  <a href="#main-content" class="skip-to-content">Skip to main content</a>
+  <div id="a11y-live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
   <div id="app-container">
     <!-- Header -->
     <header class="app-header">
       <div class="header-left">
         <div class="world-crest">✦</div>
         <div class="world-branding">
-          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v2.1</span> <span class="cloud-sync-badge connecting" id="cloud-sync-indicator" title="Supabase Database & Realtime Sync Status">☁️ Connecting</span> <span class="cloud-sync-badge live" id="online-presence-indicator" title="Players currently online in this campaign" style="display: none;">🟢 1 Online</span></h1>
+          <h1>The Bleeding Realms <span class="version-pill">D&D 5.5e</span> <span class="app-version-badge" id="app-version-indicator" title="Application Build Version">v2.2</span> <span class="cloud-sync-badge connecting" id="cloud-sync-indicator" title="Supabase Database & Realtime Sync Status">☁️ Connecting</span> <span class="cloud-sync-badge live" id="online-presence-indicator" title="Players currently online in this campaign" style="display: none;">🟢 1 Online</span></h1>
           <div class="world-subtitle">Where Primal Elements Clash and Bleed into Diverse Lands & Peoples</div>
         </div>
       </div>
@@ -47,20 +50,25 @@
         </button>
 
         <!-- Theme Picker -->
-        <select id="theme-select" class="theme-select" title="Switch Visual Theme">
+        <select id="theme-select" class="theme-select" title="Switch Visual Theme" aria-label="Switch Visual Theme">
           <option value="theme-obsidian">Arcane Obsidian</option>
           <option value="theme-parchment">Ancient Parchment</option>
           <option value="theme-frost">Glacial Frost</option>
           <option value="theme-foregrove">Verdant Foregrove</option>
         </select>
 
+        <!-- High-Contrast Accessibility Toggle -->
+        <button class="icon-btn" id="a11y-contrast-btn" title="Toggle High-Contrast Accessibility Mode" aria-label="Toggle High-Contrast Accessibility Mode" aria-pressed="false">
+          ♿
+        </button>
+
         <!-- Polyhedral Dice Roller Trigger -->
-        <button class="icon-btn" id="dice-roller-trigger" title="Open 5.5e Polyhedral Dice Roller">
+        <button class="icon-btn" id="dice-roller-trigger" title="Open 5.5e Polyhedral Dice Roller" aria-label="Open Polyhedral Dice Roller">
           Roll
         </button>
 
         <!-- Ambient Sound Engine Toggle -->
-        <button class="icon-btn" id="audio-toggle-btn" title="Toggle Generative Ambient Audio">
+        <button class="icon-btn" id="audio-toggle-btn" title="Toggle Generative Ambient Audio" aria-label="Toggle Ambient Audio">
           Audio
         </button>
 
@@ -68,36 +76,36 @@
         <div id="player-account-container"></div>
 
         <!-- DM Mode vs Player Mode Toggle (Password Protected) -->
-        <div class="dm-toggle-container" id="dm-toggle-switch" title="Click to Toggle DM / Player Environment">
-          <div class="dm-indicator"></div>
+        <div class="dm-toggle-container" id="dm-toggle-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Toggle DM or Player Environment" title="Click to Toggle DM / Player Environment">
+          <div class="dm-indicator" aria-hidden="true"></div>
           <span class="dm-label" id="dm-toggle-label">Player Environment</span>
         </div>
       </div>
     </header>
 
     <!-- Main Navigation Bar -->
-    <nav class="main-nav" id="main-nav-tabs">
-      <button class="nav-tab-btn active" data-tab="map">🗺️ World Map & Bleed Atlas</button>
-      <button class="nav-tab-btn" data-tab="combat">⚔️ Tactical Combat & Battlemat</button>
-      <button class="nav-tab-btn" data-tab="social">🍺 Social Lounge & Roleplay</button>
-      <button class="nav-tab-btn" data-tab="hero">🛡️ Player View & Journal</button>
-      <button class="nav-tab-btn" data-tab="party">👥 Party Roster & Monitor</button>
-      <button class="nav-tab-btn" data-tab="vendors">🏪 Vendors & Market</button>
-      <button class="nav-tab-btn" data-tab="compendium">✨ Magic Compendium</button>
-      <button class="nav-tab-btn" data-tab="create-hero" style="color: var(--text-gold); font-weight: 700;">✦ Create Hero</button>
-      <button class="nav-tab-btn" data-tab="pantheon">☀️ Divine Pantheon & Titans</button>
-      <button class="nav-tab-btn" data-tab="characters">🧙 Champions & NPCs</button>
-      <button class="nav-tab-btn" data-tab="factions">🚩 Factions & Influence</button>
-      <button class="nav-tab-btn" data-tab="bastions">🏰 5.5e Bastion Deck</button>
-      <button class="nav-tab-btn" data-tab="lexicon">📖 Primordial Lexicon</button>
-      <button class="nav-tab-btn" data-tab="masteries">🗡️ 5.5e Weapon Masteries</button>
-      <button class="nav-tab-btn" data-tab="timeline">⏳ World Timeline</button>
-      <button class="nav-tab-btn" data-tab="quests">📜 Rumor Mill & Quests</button>
-      <button class="nav-tab-btn" data-tab="editor">⚙️ Lore Customizer & JSON</button>
+    <nav class="main-nav" id="main-nav-tabs" role="tablist" aria-label="Campaign Navigation">
+      <button class="nav-tab-btn active" data-tab="map" role="tab" aria-selected="true">🗺️ World Map & Bleed Atlas</button>
+      <button class="nav-tab-btn" data-tab="combat" role="tab" aria-selected="false">⚔️ Tactical Combat & Battlemat</button>
+      <button class="nav-tab-btn" data-tab="social" role="tab" aria-selected="false">🍺 Social Lounge & Roleplay</button>
+      <button class="nav-tab-btn" data-tab="hero" role="tab" aria-selected="false">🛡️ Player View & Journal</button>
+      <button class="nav-tab-btn" data-tab="party" role="tab" aria-selected="false">👥 Party Roster & Monitor</button>
+      <button class="nav-tab-btn" data-tab="vendors" role="tab" aria-selected="false">🏪 Vendors & Market</button>
+      <button class="nav-tab-btn" data-tab="compendium" role="tab" aria-selected="false">✨ Magic Compendium</button>
+      <button class="nav-tab-btn" data-tab="create-hero" role="tab" aria-selected="false" style="color: var(--text-gold); font-weight: 700;">✦ Create Hero</button>
+      <button class="nav-tab-btn" data-tab="pantheon" role="tab" aria-selected="false">☀️ Divine Pantheon & Titans</button>
+      <button class="nav-tab-btn" data-tab="characters" role="tab" aria-selected="false">🧙 Champions & NPCs</button>
+      <button class="nav-tab-btn" data-tab="factions" role="tab" aria-selected="false">🚩 Factions & Influence</button>
+      <button class="nav-tab-btn" data-tab="bastions" role="tab" aria-selected="false">🏰 5.5e Bastion Deck</button>
+      <button class="nav-tab-btn" data-tab="lexicon" role="tab" aria-selected="false">📖 Primordial Lexicon</button>
+      <button class="nav-tab-btn" data-tab="masteries" role="tab" aria-selected="false">🗡️ 5.5e Weapon Masteries</button>
+      <button class="nav-tab-btn" data-tab="timeline" role="tab" aria-selected="false">⏳ World Timeline</button>
+      <button class="nav-tab-btn" data-tab="quests" role="tab" aria-selected="false">📜 Rumor Mill & Quests</button>
+      <button class="nav-tab-btn" data-tab="editor" role="tab" aria-selected="false">⚙️ Lore Customizer & JSON</button>
     </nav>
 
     <!-- Main Content Area -->
-    <main class="main-content">
+    <main class="main-content" id="main-content" tabindex="-1">
       <section id="view-map" class="view-section active"></section>
       <section id="view-combat" class="view-section"></section>
       <section id="view-social" class="view-section"></section>
@@ -399,6 +407,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 
   <!-- Main Application Script -->
-  <script src="js/bundle.js?v=2.1"></script>
+  <script src="js/bundle.js?v=2.2"></script>
 </body>
 </html>

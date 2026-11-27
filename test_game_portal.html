@@ -10,7 +10,7 @@
   <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=2.1"></script>
+  <script src="js/bundle.js?v=2.2"></script>
 
   <script>
     (async function() {
@@ -68,9 +68,9 @@
 
         // 5. Test version update
         const versionEl = doc.getElementById('app-version-indicator');
-        assert(versionEl && versionEl.textContent.trim() === 'v2.1', "Top-left version indicator updated to 'v2.1'");
-        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '2.1', "window.APP_VERSION is '2.0'");
-        assert(worldState.version === '2.1', "worldState.version is '2.0'");
+        assert(versionEl && versionEl.textContent.trim() === 'v2.2', "Top-left version indicator updated to 'v2.2'");
+        assert(typeof window.APP_VERSION === 'string' && window.APP_VERSION === '2.2', "window.APP_VERSION is '2.0'");
+        assert(worldState.version === '2.2', "worldState.version is '2.0'");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-obsidian">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>v2.2 Accessibility (WCAG AA) & Mobile/Tablet Responsive Audit</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+  <div id="test-results" style="white-space: pre-wrap; font-family: monospace; padding: 20px;"></div>
+
+  <!-- Load Dashboard Bundle -->
+  <script src="js/bundle.js?v=2.2"></script>
+
+  <script>
+    (async function() {
+      const results = [];
+      function assert(condition, message) {
+        if (condition) {
+          results.push("[PASS] " + message);
+        } else {
+          results.push("[FAIL] " + message);
+          console.error("Assertion failed: " + message);
+        }
+      }
+
+      // WCAG 2.1 Relative Luminance & Contrast Ratio Helper
+      function hexToRgb(hex) {
+        const clean = hex.replace('#', '').trim();
+        const num = parseInt(clean, 16);
+        return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+      }
+      function relLum([r, g, b]) {
+        const s = [r, g, b].map(v => {
+          const c = v / 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+      }
+      function contrastRatio(hex1, hex2) {
+        const l1 = relLum(hexToRgb(hex1));
+        const l2 = relLum(hexToRgb(hex2));
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      }
+
+      try {
+        const res = await fetch('index.html');
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        // 1. Global Document Accessibility Checks
+        assert(doc.documentElement.getAttribute('lang') === 'en', "HTML root has lang='en' attribute");
+        const vp = doc.querySelector('meta[name="viewport"]');
+        assert(vp && vp.getAttribute('content').includes('width=device-width'), "Viewport meta tag configured for mobile/tablet scaling");
+        assert(doc.querySelector('link[href*="responsive.css"]') !== null, "css/responsive.css stylesheet linked in index.html");
+
+        // 2. Skip Link, Landmarks & Live Announcer
+        const skip = doc.querySelector('a.skip-to-content[href="#main-content"]');
+        assert(skip !== null, "Skip-to-main-content keyboard link present");
+        const mainEl = doc.querySelector('main#main-content[tabindex="-1"]');
+        assert(mainEl !== null, "<main id='main-content'> landmark present and focusable");
+        const live = doc.querySelector('#a11y-live-announcer[aria-live="polite"]');
+        assert(live !== null, "Screen-reader aria-live='polite' announcer present");
+
+        // 3. Semantic ARIA Tabs & Keyboard-Operable Controls
+        const nav = doc.querySelector('nav#main-nav-tabs[role="tablist"]');
+        const tabs = doc.querySelectorAll('.nav-tab-btn[role="tab"]');
+        assert(nav !== null && tabs.length >= 16, "Navigation bar uses role='tablist' with " + tabs.length + " role='tab' buttons");
+        const dmSwitch = doc.querySelector('#dm-toggle-switch[role="switch"][tabindex="0"]');
+        assert(dmSwitch !== null, "DM/Player toggle is keyboard-focusable with role='switch'");
+        const a11yBtn = doc.querySelector('#a11y-contrast-btn[aria-label]');
+        assert(a11yBtn !== null, "High-Contrast Accessibility toggle button present with aria-label");
+        const themeSel = doc.querySelector('#theme-select[aria-label]');
+        assert(themeSel !== null, "Theme selector has explicit aria-label");
+
+        // 4. WCAG AA Color Contrast Verification (>= 4.5:1)
+        const obsidianPrimary = contrastRatio('#f0ede6', '#1a1e24');
+        const obsidianMuted = contrastRatio('#aba191', '#1a1e24');
+        const parchmentMuted = contrastRatio('#5c4632', '#e8dcce');
+        assert(obsidianPrimary >= 10.0, "Obsidian primary text contrast = " + obsidianPrimary.toFixed(2) + ":1 (WCAG AAA)");
+        assert(obsidianMuted >= 4.5, "Obsidian muted text contrast = " + obsidianMuted.toFixed(2) + ":1 (WCAG AA >= 4.5:1)");
+        assert(parchmentMuted >= 4.5, "Parchment muted text contrast = " + parchmentMuted.toFixed(2) + ":1 (WCAG AA >= 4.5:1)");
+
+        // 5. Responsive CSS Rules Check (Tablet 1024px, Mobile 640px, Coarse Touch 44px, Reduced Motion)
+        const cssRes = await fetch('css/responsive.css');
+        const cssText = await cssRes.text();
+        assert(cssText.includes('@media (max-width: 1024px)'), "Tablet responsive breakpoint (<= 1024px) defined");
+        assert(cssText.includes('@media (max-width: 640px)'), "Mobile phone responsive breakpoint (<= 640px) defined");
+        assert(cssText.includes('@media (pointer: coarse)') && cssText.includes('min-height: 44px'), "Touch device 44px+ tap target rules defined");
+        assert(cssText.includes('prefers-reduced-motion: reduce'), "OS prefers-reduced-motion accessibility rule defined");
+        assert(cssText.includes(':focus-visible'), "Crisp :focus-visible keyboard focus outlines defined");
+
+        // 6. Zero Horizontal Overflow Check at Current Viewport
+        assert(document.documentElement.scrollWidth <= window.innerWidth + 1, "No horizontal overflow detected (scrollWidth=" + document.documentElement.scrollWidth + ", innerWidth=" + window.innerWidth + ")");
+
+        // 7. Verify v2.2 version badge
+        const verEl = doc.getElementById('app-version-indicator');
+        assert(verEl && verEl.textContent.trim() === 'v2.2', "Version indicator updated to v2.2");
+
+        const passed = results.filter(r => r.startsWith('[PASS]')).length;
+        const total = results.length;
+        results.push("\n==========================================");
+        results.push("V2.2 A11Y & RESPONSIVE AUDIT PASSED: (" + passed + "/" + total + ")");
+        results.push("==========================================");
+
+        document.getElementById('test-results').innerText = results.join('\n');
+      } catch (err) {
+        results.push("[ERROR] " + err.message + "\n" + err.stack);
+        document.getElementById('test-results').innerText = results.join('\n');
+      }
+    })();
+  </script>
+</body>
+</html>

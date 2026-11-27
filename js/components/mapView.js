@@ -376,6 +376,51 @@ function initMapInteractivity(container) {
     }
   });
 
+  // Mobile & Tablet Touch Pan (1-finger) and Pinch-to-Zoom (2-finger)
+  let touchStartDist = 0;
+  let touchStartZoom = 1.0;
+  svg.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.map-pin') || e.target.closest('.map-flyout-panel')) return;
+    if (e.touches.length === 1) {
+      isDragging = true;
+      dragStartX = e.touches[0].clientX;
+      dragStartY = e.touches[0].clientY;
+      startViewX = curX;
+      startViewY = curY;
+    } else if (e.touches.length === 2) {
+      isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDist = Math.hypot(dx, dy);
+      touchStartZoom = zoomLevel;
+    }
+  }, { passive: true });
+
+  svg.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && isDragging) {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const deltaSvgX = ((e.touches[0].clientX - dragStartX) / rect.width) * curW;
+      const deltaSvgY = ((e.touches[0].clientY - dragStartY) / rect.height) * curH;
+      curX = startViewX - deltaSvgX;
+      curY = startViewY - deltaSvgY;
+      updateViewBox();
+    } else if (e.touches.length === 2 && touchStartDist > 0) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / touchStartDist;
+      zoomLevel = Math.max(0.75, Math.min(touchStartZoom * scale, 4.0));
+      updateViewBox();
+    }
+  }, { passive: false });
+
+  svg.addEventListener('touchend', () => {
+    isDragging = false;
+    touchStartDist = 0;
+  }, { passive: true });
+
   // Filter chips
   container.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {

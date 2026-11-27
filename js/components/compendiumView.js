@@ -40,15 +40,15 @@ export function renderCompendiumView(container) {
     </div>
 
     <!-- Filter & Search Bar -->
-    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;">
-      <input type="text" id="comp-search-input" class="editor-input" value="${compSearch}" placeholder="Search magic items by name, effect, or trait...">
-      <select id="comp-rarity-select" class="editor-input">
+    <div class="compendium-filter-bar" style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;">
+      <input type="text" id="comp-search-input" class="editor-input" aria-label="Search magic items" value="${compSearch}" placeholder="Search magic items by name, effect, or trait...">
+      <select id="comp-rarity-select" class="editor-input" aria-label="Filter by rarity">
         ${['all', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'].map(r => `<option value="${r}" ${compRarity === r ? 'selected' : ''}>${r === 'all' ? 'All Rarities' : r}</option>`).join('')}
       </select>
-      <select id="comp-category-select" class="editor-input">
+      <select id="comp-category-select" class="editor-input" aria-label="Filter by category">
         ${['all', 'Weapon', 'Armor', 'Wondrous', 'Potion', 'Ring', 'Staff', 'Wand', 'Scroll'].map(c => `<option value="${c}" ${compCategory === c ? 'selected' : ''}>${c === 'all' ? 'All Categories' : c}</option>`).join('')}
       </select>
-      <select id="comp-attune-select" class="editor-input">
+      <select id="comp-attune-select" class="editor-input" aria-label="Filter by attunement">
         <option value="all" ${compAttunement === 'all' ? 'selected' : ''}>Attunement: Any</option>
         <option value="yes" ${compAttunement === 'yes' ? 'selected' : ''}>Requires Attunement</option>
         <option value="no" ${compAttunement === 'no' ? 'selected' : ''}>No Attunement</option>

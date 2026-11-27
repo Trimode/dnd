@@ -12,7 +12,7 @@
   <div id="inv-mount" style="display: none;"></div>
 
   <!-- Load Dashboard Bundle -->
-  <script src="js/bundle.js?v=2.1"></script>
+  <script src="js/bundle.js?v=2.2"></script>
 
   <script>
     (async function() {
@@ -107,13 +107,13 @@
         assert(typeof supabaseDb.createCampaignWithPassword === 'function', "supabaseDb.createCampaignWithPassword RPC helper exists");
         assert(typeof supabaseDb.uploadBattlemapImage === 'function', "supabaseDb.uploadBattlemapImage Storage helper exists");
 
-        // 6. Verify DOM controls in index.html & version v2.1
+        // 6. Verify DOM controls in index.html & version v2.2
         const res = await fetch('index.html');
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         assert(doc.getElementById('game-create-form') !== null, "#game-create-form exists in Campaign Selection Portal");
         const verEl = doc.getElementById('app-version-indicator');
-        assert(verEl && verEl.textContent.trim() === 'v2.1', "Version indicator updated to v2.1");
+        assert(verEl && verEl.textContent.trim() === 'v2.2', "Version indicator updated to v2.2");
 
         const passed = results.filter(r => r.startsWith('[PASS]')).length;
         const total = results.length;

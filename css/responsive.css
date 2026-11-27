@@ -1,0 +1,339 @@
+/* ==========================================================================
+   v2.2 Accessibility (WCAG AA) & Reactive Mobile / Tablet Responsive Layer
+   Covers: Keyboard Focus, Screen Reader Utilities, High-Contrast Mode,
+   Reduced Motion, 44px+ Touch Tap Targets, Tablet (<=1024px) & Mobile (<=640px)
+   ========================================================================== */
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Skip to Main Content Link (Keyboard Accessibility) */
+.skip-to-content {
+  position: absolute;
+  top: -100px;
+  left: 1rem;
+  z-index: 9999;
+  background: #fde047;
+  color: #0f172a;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0.65rem 1.1rem;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+  transition: top 0.15s ease;
+}
+.skip-to-content:focus {
+  top: 0.75rem;
+  outline: 3px solid #0284c7;
+  outline-offset: 2px;
+}
+
+/* Crisp WCAG 2.1 Focus-Visible Outlines for Keyboard Navigation */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #fde047 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(253, 224, 71, 0.22) !important;
+}
+
+/* High-Contrast & Large-Text Accessibility Modes */
+html.a11y-high-contrast {
+  --bg-primary: #05070a;
+  --bg-secondary: #0c1017;
+  --bg-tertiary: #161d29;
+  --bg-card: #0e141f;
+  --text-primary: #ffffff;
+  --text-secondary: #f1f5f9;
+  --text-muted: #cbd5e1;
+  --text-gold: #fde047;
+  --border-subtle: rgba(253, 224, 71, 0.45);
+  --border-strong: rgba(253, 224, 71, 0.85);
+}
+
+html.a11y-large-text {
+  font-size: 112.5%;
+}
+
+/* Respect OS Reduced Motion Preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Touch Device Tap Targets (Coarse Pointers) */
+@media (pointer: coarse) {
+  .btn,
+  .nav-tab-btn,
+  .icon-btn,
+  .zoom-btn,
+  .close-btn,
+  .filter-chip,
+  .search-trigger-btn,
+  .game-switcher-btn,
+  .dm-toggle-container,
+  .theme-select,
+  .editor-input {
+    min-height: 44px;
+  }
+  .icon-btn,
+  .zoom-btn,
+  .close-btn {
+    min-width: 44px;
+  }
+  .kbd-badge {
+    display: none;
+  }
+}
+
+/* Prevent horizontal overflow globally */
+html, body, #app-container {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.interactive-map-svg,
+#battlefield-canvas {
+  touch-action: none;
+}
+
+/* ==========================================================================
+   TABLET BREAKPOINT (<= 1024px — iPad, Galaxy Tab, Small Laptops)
+   ========================================================================== */
+@media (max-width: 1024px) {
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 0.65rem 1rem;
+  }
+
+  .header-left {
+    justify-content: space-between;
+  }
+
+  .header-controls {
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    justify-content: flex-start;
+  }
+
+  .main-nav {
+    padding: 0 0.75rem;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+
+  .nav-tab-btn {
+    scroll-snap-align: start;
+    padding: 0.65rem 0.85rem;
+    font-size: 0.86rem;
+    min-height: 44px;
+  }
+
+  .main-content {
+    padding: 1rem;
+  }
+
+  .view-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.65rem;
+  }
+
+  /* Stack 2-col and 3-col complex VTT decks gracefully */
+  .hero-view-grid,
+  .combat-main-layout,
+  .social-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1rem !important;
+  }
+
+  .combat-panel,
+  .social-panel,
+  .hero-left-column,
+  .hero-right-column {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .combat-top-deck {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 0.6rem;
+  }
+
+  .combat-deck-right {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .canvas-scroll-container {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #battlefield-canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .modal-card {
+    width: 94vw !important;
+    max-width: 94vw !important;
+    max-height: 90dvh !important;
+  }
+
+  .map-controls-bar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 0.5rem;
+  }
+
+  .map-action-btns {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .compendium-filter-bar {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+/* ==========================================================================
+   MOBILE PHONE BREAKPOINT (<= 640px — iPhone SE/14/15, Pixel, Galaxy S)
+   ========================================================================== */
+@media (max-width: 640px) {
+  body {
+    font-size: 16px;
+  }
+
+  .app-header {
+    padding: 0.5rem 0.75rem;
+    position: relative; /* Free vertical space on small phones */
+  }
+
+  .world-crest {
+    width: 36px;
+    height: 36px;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .world-branding h1 {
+    font-size: 1rem;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .world-subtitle {
+    display: none;
+  }
+
+  .header-controls {
+    gap: 0.35rem;
+  }
+
+  .search-trigger-btn,
+  .game-switcher-btn,
+  .theme-select,
+  .dm-toggle-container {
+    font-size: 0.78rem;
+    padding: 0.35rem 0.6rem;
+    min-height: 44px;
+  }
+
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .main-nav {
+    padding: 0 0.5rem;
+    gap: 0.15rem;
+  }
+
+  .nav-tab-btn {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.82rem;
+    min-height: 44px;
+  }
+
+  .main-content {
+    padding: 0.75rem;
+  }
+
+  .view-header h2 {
+    font-size: 1.3rem;
+  }
+
+  .view-tagline {
+    font-size: 0.82rem;
+  }
+
+  .cards-grid,
+  .party-grid,
+  .game-tiles-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .compendium-filter-bar {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Ability score 6-col grids -> 3x2 on phones */
+  .char-core-stats-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Map flyout becomes a clean bottom sheet on phones */
+  .map-flyout-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    height: 62vh !important;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+  }
+
+  .map-canvas-container {
+    min-height: 55vh;
+  }
+
+  .modal-card {
+    width: 96vw !important;
+    max-width: 96vw !important;
+    max-height: 92dvh !important;
+    border-radius: var(--radius-md);
+  }
+
+  .social-header-banner {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 0.6rem;
+  }
+}

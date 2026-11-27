@@ -2736,7 +2736,7 @@ const PREFS_KEY = 'dnd_bleeding_realms_prefs_v1';
 
 class WorldStateManager {
   constructor() {
-    this.version = '2.1';
+    this.version = '2.2';
     this.cloudStatus = 'connecting'; // 'connecting' | 'live' | 'syncing' | 'offline' | 'error'
     this.cloudListeners = [];
     this.cloudReady = false;
@@ -6164,6 +6164,51 @@ function initMapInteractivity(container) {
       svg.classList.remove('panning');
     }
   });
+
+  // Mobile & Tablet Touch Pan (1-finger) and Pinch-to-Zoom (2-finger)
+  let touchStartDist = 0;
+  let touchStartZoom = 1.0;
+  svg.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.map-pin') || e.target.closest('.map-flyout-panel')) return;
+    if (e.touches.length === 1) {
+      isDragging = true;
+      dragStartX = e.touches[0].clientX;
+      dragStartY = e.touches[0].clientY;
+      startViewX = curX;
+      startViewY = curY;
+    } else if (e.touches.length === 2) {
+      isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      touchStartDist = Math.hypot(dx, dy);
+      touchStartZoom = zoomLevel;
+    }
+  }, { passive: true });
+
+  svg.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && isDragging) {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const deltaSvgX = ((e.touches[0].clientX - dragStartX) / rect.width) * curW;
+      const deltaSvgY = ((e.touches[0].clientY - dragStartY) / rect.height) * curH;
+      curX = startViewX - deltaSvgX;
+      curY = startViewY - deltaSvgY;
+      updateViewBox();
+    } else if (e.touches.length === 2 && touchStartDist > 0) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / touchStartDist;
+      zoomLevel = Math.max(0.75, Math.min(touchStartZoom * scale, 4.0));
+      updateViewBox();
+    }
+  }, { passive: false });
+
+  svg.addEventListener('touchend', () => {
+    isDragging = false;
+    touchStartDist = 0;
+  }, { passive: true });
 
   // Filter chips
   container.querySelectorAll('.filter-chip').forEach(chip => {
@@ -15878,15 +15923,15 @@ function renderCompendiumView(container) {
     </div>
 
     <!-- Filter & Search Bar -->
-    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;">
-      <input type="text" id="comp-search-input" class="editor-input" value="${compSearch}" placeholder="Search magic items by name, effect, or trait...">
-      <select id="comp-rarity-select" class="editor-input">
+    <div class="compendium-filter-bar" style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.75rem;">
+      <input type="text" id="comp-search-input" class="editor-input" aria-label="Search magic items" value="${compSearch}" placeholder="Search magic items by name, effect, or trait...">
+      <select id="comp-rarity-select" class="editor-input" aria-label="Filter by rarity">
         ${['all', 'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact'].map(r => `<option value="${r}" ${compRarity === r ? 'selected' : ''}>${r === 'all' ? 'All Rarities' : r}</option>`).join('')}
       </select>
-      <select id="comp-category-select" class="editor-input">
+      <select id="comp-category-select" class="editor-input" aria-label="Filter by category">
         ${['all', 'Weapon', 'Armor', 'Wondrous', 'Potion', 'Ring', 'Staff', 'Wand', 'Scroll'].map(c => `<option value="${c}" ${compCategory === c ? 'selected' : ''}>${c === 'all' ? 'All Categories' : c}</option>`).join('')}
       </select>
-      <select id="comp-attune-select" class="editor-input">
+      <select id="comp-attune-select" class="editor-input" aria-label="Filter by attunement">
         <option value="all" ${compAttunement === 'all' ? 'selected' : ''}>Attunement: Any</option>
         <option value="yes" ${compAttunement === 'yes' ? 'selected' : ''}>Requires Attunement</option>
         <option value="no" ${compAttunement === 'no' ? 'selected' : ''}>No Attunement</option>
@@ -16432,7 +16477,7 @@ class DiceRollerModal {
 const diceRoller = new DiceRollerModal();
 
   if (typeof window !== 'undefined') {
-    window.APP_VERSION = '2.1';
+    window.APP_VERSION = '2.2';
     window.renderMapView = renderMapView;
     window.renderCombatView = renderCombatView;
     window.renderCharacterCreateView = renderCharacterCreateView;
@@ -16505,14 +16550,53 @@ const diceRoller = new DiceRollerModal();
 
     function switchTab(tabId) {
       worldState.setActiveTab(tabId);
-      navTabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === tabId));
+      navTabs.forEach(t => {
+        const isAct = t.getAttribute('data-tab') === tabId;
+        t.classList.toggle('active', isAct);
+        t.setAttribute('aria-selected', isAct ? 'true' : 'false');
+      });
       Object.keys(viewContainers).forEach(key => {
         if (viewContainers[key]) {
           viewContainers[key].classList.toggle('active', key === tabId);
         }
       });
+      const announcer = document.getElementById('a11y-live-announcer');
+      if (announcer) announcer.textContent = 'Switched to ' + tabId + ' view';
       refreshView(tabId);
     }
+
+    // Keyboard & Accessibility Enhancements (v2.2)
+    const a11yContrastBtn = document.getElementById('a11y-contrast-btn');
+    if (a11yContrastBtn) {
+      if (worldState.prefs && worldState.prefs.highContrast) {
+        document.documentElement.classList.add('a11y-high-contrast');
+        a11yContrastBtn.setAttribute('aria-pressed', 'true');
+      }
+      a11yContrastBtn.addEventListener('click', () => {
+        const next = !document.documentElement.classList.contains('a11y-high-contrast');
+        document.documentElement.classList.toggle('a11y-high-contrast', next);
+        a11yContrastBtn.setAttribute('aria-pressed', next ? 'true' : 'false');
+        if (worldState.prefs) {
+          worldState.prefs.highContrast = next;
+          worldState.savePrefs();
+        }
+      });
+    }
+    if (dmToggle) {
+      dmToggle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          dmToggle.click();
+        }
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active').forEach(m => {
+          if (m.id !== 'game-select-modal') m.classList.remove('active');
+        });
+      }
+    });
 
     function refreshView(tabId) {
       const container = viewContainers[tabId];

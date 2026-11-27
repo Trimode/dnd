@@ -16,8 +16,8 @@
   --border-glow: rgba(255, 140, 0, 0.4);
 
   --text-primary: #f0ede6;
-  --text-secondary: #c5bcae;
-  --text-muted: #8c8273;
+  --text-secondary: #d2cabd;
+  --text-muted: #aba191;
   --text-gold: #e5c158;
   --text-highlight: #ffab40;
 
@@ -65,9 +65,9 @@ html.theme-parchment {
   --border-glow: rgba(184, 115, 51, 0.4);
 
   --text-primary: #2b1d0c;
-  --text-secondary: #543d25;
-  --text-muted: #7d654d;
-  --text-gold: #9e6b28;
+  --text-secondary: #4a351f;
+  --text-muted: #5c4632;
+  --text-gold: #8c5c1e;
   --text-highlight: #b84a14;
   --shadow-sm: 0 2px 6px rgba(70, 50, 30, 0.12);
   --shadow-md: 0 6px 16px rgba(70, 50, 30, 0.18);
